@@ -172,11 +172,6 @@ export function resetTree(root: TNode): TNode {
   return { ...root, total: undefined, kids: [] };
 }
 
-/** Collapse all descendants but keep the root expanded. */
-export function collapseAll(root: TNode): TNode {
-  return { ...root, kids: [] };
-}
-
 /** Drop expanded kids whose index lies beyond `total` (children shrank after a live update). */
 export function pruneTo(root: TNode, path: number[], total: number): TNode {
   return updateAtPath(root, path, (n) => ({ ...n, total, kids: n.kids.filter((k) => k.index < total) }));

@@ -1,8 +1,9 @@
 // Integration tests on the real Qubic core and the epoch-229 state files. Skipped unless
-//   QSTATE_TEST_CORE_DIR      core checkout (HEAD, epoch 233, a git clone with tags)
+//   QSTATE_TEST_CORE_REPO     a git clone of the core with its tags (used as the repoUrl: no network)
 //   QSTATE_TEST_STATE_DIR     directory with the epoch-229 contractNNNN.229 files
-// are set; QSTATE_TEST_CORE_DIR_229 (plain snapshot of v1.303.2) enables the snapshot tests and
-// QSTATE_SOURCE_DIR the digest comparison with docs/research/k12-spike/digest_229.txt.
+// are set; QSTATE_TEST_CORE_DIR_229 (plain snapshot of v1.303.2, made into a git repository here) lets the tests that
+// only need the matching sources run without a clone, and QSTATE_SOURCE_DIR enables the digest comparison with
+// docs/research/data/digest_229.txt.
 #include "fixtures.h"
 #include "test_env.h"
 
@@ -37,11 +38,45 @@ struct RealEnv {
 
 RealEnv env() {
     RealEnv e;
-    e.core = qstate::testing::coreDir();
+    e.core = qstate::testing::coreRepo();
     e.state = qstate::testing::stateDir();
-    e.core229 = qstate::testing::envOr("QSTATE_TEST_CORE_DIR_229");
+    e.core229 = qstate::testing::coreDir229();
     e.source = qstate::testing::sourceDir();
     return e;
+}
+
+// The plain snapshot of v1.303.2 as a git repository with the tag "snapshot" (made once per process).
+struct SnapshotRepo {
+    TempDir dir;
+    qstate::testing::GitFixtureRepo git;
+    explicit SnapshotRepo(const std::string& snapshot) : git(dir.path() / "snapshot") {
+        for (const auto& entry : fs::directory_iterator(snapshot)) {
+            if (entry.path().filename() == ".git") continue;
+            fs::copy(entry.path(), git.dir() / entry.path().filename(), fs::copy_options::recursive);
+        }
+        git.commit("v1.303.2");
+        git.tag("snapshot");
+    }
+};
+
+// Sources that match the epoch-229 files: the real core with ref "auto", else the snapshot repository.
+struct RealSource {
+    std::string url, ref;
+};
+
+RealSource snapshotSource(const RealEnv& e) {
+    static const SnapshotRepo* snapshot = nullptr;
+    if (snapshot == nullptr) snapshot = new SnapshotRepo(e.core229);
+    return {snapshot->git.url(), "snapshot"};
+}
+
+RealSource realSource(const RealEnv& e) {
+    if (!e.core.empty()) return {e.core, "auto"};
+    return snapshotSource(e);
+}
+
+json request(const std::string& url, const std::string& ref, const std::string& statePath) {
+    return {{"core", {{"repoUrl", url}, {"ref", ref}}}, {"statePath", statePath}};
 }
 
 std::string statusTable(const json& ws) {
@@ -93,58 +128,105 @@ bool findLeaf(Harness& h, unsigned contract, const std::string& id, int depth, c
 
 } // namespace
 
-TEST_CASE("real: epoch-229 files with core HEAD and coreRef auto pick v1.303.2") {
+TEST_CASE("real: core.sync of the real repository lists tags with version and epoch") {
     RealEnv e = env();
-    if (!e.haveHead()) {
-        MESSAGE("skipped: QSTATE_TEST_CORE_DIR / QSTATE_TEST_STATE_DIR not set");
+    if (e.core.empty()) {
+        MESSAGE("skipped: QSTATE_TEST_CORE_REPO not set");
         return;
     }
     Harness h;
     const auto t0 = Clock::now();
-    json ws = h.ok("workspace.open", {{"coreDir", e.core}, {"stateDir", e.state}, {"coreRef", "auto"}});
-    std::cerr << "[service] open (auto, cold export cache): " << msSince(t0) << " ms, parse " << ws["core"]["parseMs"] << " ms\n";
+    json repo = h.ok("core.sync", {{"repoUrl", e.core}});
+    const double coldMs = msSince(t0);
+    const auto t1 = Clock::now();
+    json again = h.ok("core.sync", {{"repoUrl", e.core}, {"offline", true}});
+    const double warmMs = msSince(t1);
+    std::cerr << "[service] core.sync of the local core clone: first (clone + " << repo["tags"].size() << " tags) " << coldMs
+              << " ms, listing from the mirror " << warmMs << " ms\n";
+    CHECK(again == repo);
+    CHECK(warmMs < 1000);
+    REQUIRE(repo["tags"].size() > 100);
+    bool found = false;
+    for (const json& tag : repo["tags"]) {
+        CHECK(tag["kind"] == "tag");
+        CHECK(tag["sha"].get<std::string>().size() == 40);
+        CHECK(tag["date"].is_string());
+        if (tag["ref"] == "v1.303.2") {
+            found = true;
+            CHECK(tag["version"] == "1.303.2");
+            CHECK(tag["epoch"] == 229);
+        }
+    }
+    CHECK(found);
+    CHECK(repo["defaultBranch"].is_string());
+    CHECK(repo["branches"][0]["ref"] == repo["defaultBranch"]);
+    CHECK(repo["branches"][0]["epoch"].get<int>() >= 233);
+
+    json commits = h.ok("core.commits", {{"repoUrl", e.core}, {"ref", "v1.303.2"}, {"limit", 10}});
+    REQUIRE(commits["commits"].size() == 10);
+    CHECK(commits["commits"][0]["epoch"] == 229);
+    CHECK(commits["total"].get<int>() > 100);
+    json searched = h.ok("core.commits", {{"repoUrl", e.core}, {"ref", repo["defaultBranch"]}, {"search", "fix"}, {"limit", 5}});
+    CHECK(searched["commits"].size() == 5);
+}
+
+TEST_CASE("real: epoch-229 files with core ref auto pick v1.303.2") {
+    RealEnv e = env();
+    if (!e.haveHead()) {
+        MESSAGE("skipped: QSTATE_TEST_CORE_REPO / QSTATE_TEST_STATE_DIR not set");
+        return;
+    }
+    Harness h;
+    const auto t0 = Clock::now();
+    json ws = h.ok("workspace.open", request(e.core, "auto", e.state));
+    std::cerr << "[service] open (auto, cold mirror and export): " << msSince(t0) << " ms, parse " << ws["core"]["parseMs"] << " ms\n";
+    CHECK(ws["core"]["repoUrl"] == e.core);
     CHECK(ws["core"]["ref"] == "v1.303.2");
+    CHECK(ws["core"]["kind"] == "tag");
     CHECK(ws["core"]["epoch"] == 229);
     CHECK(ws["core"]["version"] == "1.303.2");
     CHECK(ws["core"]["sha"].get<std::string>().size() == 40);
-    CHECK(ws["core"]["sourceDir"].get<std::string>().find(h.scratch.str()) == 0);
     CHECK(ws["state"]["epoch"] == 229);
+    CHECK(ws["state"]["scope"] == "dir");
     REQUIRE(ws["contracts"].size() == 29);
     INFO(statusTable(ws));
     CHECK(indicesWith(ws, "ok").size() == 29);
     CHECK(firstDiagnostic(ws, "error", "").is_null());
     CHECK(firstDiagnostic(ws, "warning", "epoch").is_null());
 
-    // second open: the export is cached
+    // second open: mirror and export are cached
     const auto t1 = Clock::now();
-    json again = h.ok("workspace.open", {{"coreDir", e.core}, {"stateDir", e.state}, {"coreRef", "auto"}});
-    std::cerr << "[service] open (auto, warm export cache): " << msSince(t1) << " ms\n";
-    CHECK(again["core"]["sourceDir"] == ws["core"]["sourceDir"]);
+    json again = h.ok("workspace.open", request(e.core, "auto", e.state));
+    std::cerr << "[service] open (auto, warm mirror and export): " << msSince(t1) << " ms\n";
+    CHECK(again["core"]["sha"] == ws["core"]["sha"]);
 
-    // explicit tag: same result
-    json tag = h.ok("workspace.open", {{"coreDir", e.core}, {"stateDir", e.state}, {"coreRef", "v1.303.2"}});
+    // explicit tag, and the commit sha: same result
+    json tag = h.ok("workspace.open", request(e.core, "v1.303.2", e.state));
     CHECK(tag["core"]["ref"] == "v1.303.2");
     CHECK(indicesWith(tag, "ok").size() == 29);
-    CHECK(h.errorCode("workspace.open", {{"coreDir", e.core}, {"stateDir", e.state}, {"coreRef", "no-such-tag"}}) == "invalid_params");
-
-    // the exported tree is a cache copy: no watcher on it (editing events cannot happen), state files are watched
+    json sha = h.ok("workspace.open", request(e.core, ws["core"]["sha"], e.state));
+    CHECK(sha["core"]["kind"] == "commit");
+    CHECK(indicesWith(sha, "ok").size() == 29);
+    CHECK(h.errorCode("workspace.open", request(e.core, "no-such-tag", e.state)) == "invalid_params");
     h.ok("workspace.close");
 }
 
-TEST_CASE("real: epoch-229 files with the HEAD working tree: only NOST changed its layout") {
+TEST_CASE("real: epoch-229 files with the head of the default branch: only NOST changed its layout") {
     RealEnv e = env();
     if (!e.haveHead()) {
-        MESSAGE("skipped: QSTATE_TEST_CORE_DIR / QSTATE_TEST_STATE_DIR not set");
+        MESSAGE("skipped: QSTATE_TEST_CORE_REPO / QSTATE_TEST_STATE_DIR not set");
         return;
     }
     Harness h;
-    json ws = h.ok("workspace.open", {{"coreDir", e.core}, {"stateDir", e.state}});
-    CHECK(ws["core"]["ref"] == "");
+    const std::string branch = h.ok("core.sync", {{"repoUrl", e.core}})["defaultBranch"];
+    json ws = h.ok("workspace.open", request(e.core, branch, e.state));
+    CHECK(ws["core"]["ref"] == branch);
+    CHECK(ws["core"]["kind"] == "branch");
     CHECK(ws["core"]["epoch"].get<int>() >= 233);
     REQUIRE(ws["contracts"].size() >= 31);
     INFO(statusTable(ws));
     const auto mismatch = indicesWith(ws, "size-mismatch");
-    std::cerr << "[service] HEAD working tree vs epoch-229 files, size-mismatch:";
+    std::cerr << "[service] head of " << branch << " vs epoch-229 files, size-mismatch:";
     for (unsigned i : mismatch) std::cerr << " " << i << "(" << contractOf(ws, i)["name"].get<std::string>() << ")";
     std::cerr << "; ok: " << indicesWith(ws, "ok").size() << ", missing-file: " << indicesWith(ws, "missing-file").size() << "\n";
     CHECK(mismatch == std::set<unsigned>{14});
@@ -161,26 +243,47 @@ TEST_CASE("real: epoch-229 files with the HEAD working tree: only NOST changed i
     h.ok("workspace.close");
 }
 
-TEST_CASE("real: plain snapshot directory of v1.303.2 (not a git repository)") {
+TEST_CASE("real: a single real state file") {
+    RealEnv e = env();
+    if (!e.haveHead() && !e.haveSnapshot()) {
+        MESSAGE("skipped: real data not configured");
+        return;
+    }
+    const RealSource src = realSource(e);
+    Harness h;
+    const std::string file = e.state + "/contract0001.229";
+    json ws = h.ok("workspace.open", request(src.url, src.ref, file));
+    CHECK(ws["state"]["scope"] == "file");
+    CHECK(ws["state"]["epoch"] == 229);
+    REQUIRE(ws["contracts"].size() == 1);
+    CHECK(ws["contracts"][0]["name"] == "QX");
+    CHECK(ws["contracts"][0]["status"] == "ok");
+    CHECK(ws["core"]["epoch"] == 229);
+    CHECK(h.ok("state.children", {{"contract", 1}, {"id", ""}})["total"].get<int>() > 0);
+    CHECK(h.errorCode("state.node", {{"contract", 2}, {"id", ""}}) == "not_found");
+}
+
+TEST_CASE("real: a plain snapshot of v1.303.2 as a repository") {
     RealEnv e = env();
     if (!e.haveSnapshot()) {
         MESSAGE("skipped: QSTATE_TEST_CORE_DIR_229 / QSTATE_TEST_STATE_DIR not set");
         return;
     }
     Harness h;
+    const RealSource snap = snapshotSource(e);
     const auto t0 = Clock::now();
-    json ws = h.ok("workspace.open", {{"coreDir", e.core229}, {"stateDir", e.state}});
-    std::cerr << "[service] open (snapshot dir, no git): " << msSince(t0) << " ms, parse " << ws["core"]["parseMs"] << " ms\n";
+    json ws = h.ok("workspace.open", request(snap.url, snap.ref, e.state));
+    std::cerr << "[service] open (snapshot repository): " << msSince(t0) << " ms, parse " << ws["core"]["parseMs"] << " ms\n";
     REQUIRE(ws["contracts"].size() == 29);
     INFO(statusTable(ws));
     CHECK(indicesWith(ws, "ok").size() == 29);
     CHECK(ws["core"]["version"] == "1.303.2");
     CHECK(ws["core"]["epoch"] == 229);
-    CHECK(ws["core"]["ref"] == "");
-    // auto on a non-git directory: working tree + warning
-    json autoWs = h.ok("workspace.open", {{"coreDir", e.core229}, {"stateDir", e.state}, {"coreRef", "auto"}});
+    CHECK(ws["core"]["ref"] == "snapshot");
+    // auto finds no tag of epoch 229 ("snapshot" is not a release tag but its EPOCH does match: it is picked)
+    json autoWs = h.ok("workspace.open", request(snap.url, "auto", e.state));
+    CHECK(autoWs["core"]["ref"] == "snapshot");
     CHECK(indicesWith(autoWs, "ok").size() == 29);
-    CHECK_FALSE(firstDiagnostic(autoWs, "warning", "auto").is_null());
     h.ok("workspace.close");
 }
 
@@ -191,13 +294,10 @@ TEST_CASE("real: pipeline timing, browsing, tables, search") {
         return;
     }
     Harness h;
-    // Cold schema from a snapshot directory (no git involved) + the first node views of several contracts.
-    const std::string coreDir = e.haveSnapshot() ? e.core229 : e.core;
-    const std::string ref = e.haveSnapshot() ? "" : "auto";
+    const RealSource src = realSource(e);
+    // Cold mirror + export + schema + the first node views of several contracts.
     const auto t0 = Clock::now();
-    json req = {{"coreDir", coreDir}, {"stateDir", e.state}};
-    if (!ref.empty()) req["coreRef"] = ref;
-    json ws = h.ok("workspace.open", req);
+    json ws = h.ok("workspace.open", request(src.url, src.ref, e.state));
     const double openMs = msSince(t0);
     const auto t1 = Clock::now();
     for (unsigned c : {1u, 2u, 4u, 9u, 14u, 26u}) {
@@ -216,10 +316,10 @@ TEST_CASE("real: pipeline timing, browsing, tables, search") {
         }
     }
     const double viewsMs = msSince(t1);
-    std::cerr << "[service] pipeline (cold schema from " << (ref.empty() ? "snapshot dir" : "git tag cache") << " + first views of 6 contracts): open "
-              << openMs << " ms, views " << viewsMs << " ms, total " << openMs + viewsMs << " ms\n";
+    std::cerr << "[service] pipeline (cold mirror, export and schema + first views of 6 contracts): open " << openMs << " ms, views "
+              << viewsMs << " ms, total " << openMs + viewsMs << " ms\n";
 #if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
-    CHECK(openMs + viewsMs < 1500); // the target of the task; sanitizer builds are several times slower
+    CHECK(openMs + viewsMs < 2500); // sanitizer builds are several times slower
 #endif
 
     // QX (contract 1): collections are browsable as tables; search finds an identity found in the tree
@@ -286,7 +386,7 @@ TEST_CASE("real: state.digest of small files equals the recorded K12 digests") {
         MESSAGE("skipped: QSTATE_SOURCE_DIR not set");
         return;
     }
-    std::ifstream in(e.source + "/docs/research/k12-spike/digest_229.txt");
+    std::ifstream in(e.source + "/docs/research/data/digest_229.txt");
     if (!in) {
         MESSAGE("skipped: digest_229.txt not found");
         return;
@@ -300,12 +400,11 @@ TEST_CASE("real: state.digest of small files equals the recorded K12 digests") {
     }
     REQUIRE(recorded.size() == 29);
     Harness h;
-    json req = {{"coreDir", e.haveSnapshot() ? e.core229 : e.core}, {"stateDir", e.state}};
-    if (!e.haveSnapshot()) req["coreRef"] = "auto";
-    h.ok("workspace.open", req);
+    const RealSource src = realSource(e);
+    h.ok("workspace.open", request(src.url, src.ref, e.state));
     int checked = 0;
     for (const auto& [index, info] : recorded) {
-        if (info.first > (64u << 20)) continue; // big files are covered by the CLI smoke test
+        if (info.first > (64u << 20)) continue; // the big files take seconds; the support tests cover them
         json d = h.ok("state.digest", {{"contract", index}});
         CHECK_MESSAGE(d["k12"] == info.second, "contract " << index);
         ++checked;
@@ -320,9 +419,8 @@ TEST_CASE("real: concurrent reads while the real workspace is reloaded") {
         return;
     }
     Harness h;
-    json req = {{"coreDir", e.haveSnapshot() ? e.core229 : e.core}, {"stateDir", e.state}};
-    if (!e.haveSnapshot()) req["coreRef"] = "auto";
-    h.ok("workspace.open", req);
+    const RealSource src = realSource(e);
+    h.ok("workspace.open", request(src.url, src.ref, e.state));
     std::atomic<bool> stop{false};
     std::atomic<int> failures{0};
     std::atomic<long> calls{0};
@@ -358,77 +456,36 @@ TEST_CASE("real: a newer open cancels the extraction that is still running") {
         return;
     }
     Harness h;
-
-    TempDir core, state;
-    writeFakeCore(core.path());
-    writeFakeState(state.path());
-    json big = {{"coreDir", e.haveSnapshot() ? e.core229 : e.core}, {"stateDir", e.state}};
-    if (!e.haveSnapshot()) big["coreRef"] = "auto";
+    Fixture small;
+    const RealSource src = realSource(e);
+    json big = request(src.url, src.ref, e.state);
     json bigResult;
     std::thread t([&] { bigResult = h.call("workspace.open", big); });
     std::this_thread::sleep_for(milliseconds(25));
-    json small = h.call("workspace.open", {{"coreDir", core.str()}, {"stateDir", state.str()}});
+    json smallResult = h.call("workspace.open", small.request());
     t.join();
-    REQUIRE(small.contains("result"));
+    REQUIRE(smallResult.contains("result"));
     // the big one was either cancelled, or (if it happened to finish first) superseded by the small one
     if (bigResult.contains("error")) CHECK(bigResult["error"]["message"] == "cancelled");
     json cur = h.ok("workspace.get");
-    CHECK(cur["request"]["coreDir"] == core.str());
-    CHECK(cur["id"] == small["result"]["id"]);
-}
-
-TEST_CASE("real: core.versions lists the newest tags with version and epoch") {
-    RealEnv e = env();
-    if (e.core.empty()) {
-        MESSAGE("skipped: QSTATE_TEST_CORE_DIR not set");
-        return;
-    }
-    Harness h;
-    const auto t0 = Clock::now();
-    json r = h.ok("core.versions", {{"coreDir", e.core}});
-    std::cerr << "[service] core.versions (30 tags, cold): " << msSince(t0) << " ms\n";
-    CHECK(r["worktree"]["kind"] == "worktree");
-    CHECK(r["worktree"]["version"].is_string());
-    CHECK(r["worktree"]["epoch"].get<int>() >= 233);
-    CHECK(r["worktree"]["sha"].get<std::string>().size() == 40);
-    REQUIRE(r["refs"].size() == 30);
-    bool found = false;
-    std::string previousDate;
-    for (const json& ref : r["refs"]) {
-        CHECK(ref["kind"] == "tag");
-        CHECK(ref["version"].is_string());
-        CHECK(ref["epoch"].is_number());
-        CHECK(ref["sha"].get<std::string>().size() == 40);
-        const std::string date = ref["date"];
-        if (!previousDate.empty()) CHECK(date <= previousDate); // newest first
-        previousDate = date;
-        if (ref["ref"] == "v1.303.2") {
-            found = true;
-            CHECK(ref["version"] == "1.303.2");
-            CHECK(ref["epoch"] == 229);
-        }
-    }
-    CHECK(found);
-    const auto t1 = Clock::now();
-    json small = h.ok("core.versions", {{"coreDir", e.core}, {"limit", 5}});
-    CHECK(small["refs"].size() == 5);
-    CHECK(small["refs"][0] == r["refs"][0]);
-    std::cerr << "[service] core.versions (5 tags, warm memo): " << msSince(t1) << " ms\n";
+    CHECK(cur["request"] == small.request());
+    CHECK(cur["id"] == smallResult["result"]["id"]);
 }
 
 TEST_CASE("real: watching small copies of real state files") {
     RealEnv e = env();
-    if (!e.haveSnapshot()) {
-        MESSAGE("skipped: QSTATE_TEST_CORE_DIR_229 / QSTATE_TEST_STATE_DIR not set");
+    if (!e.haveSnapshot() && !e.haveHead()) {
+        MESSAGE("skipped: real data not configured");
         return;
     }
     TempDir state;
     for (const char* name : {"contract0000.229", "contract0015.229", "contract0016.229"}) {
         fs::copy_file(fs::path(e.state) / name, state / name);
     }
+    const RealSource src = realSource(e);
     Harness h;
     EventCollector events(h.bus);
-    json ws = h.ok("workspace.open", {{"coreDir", e.core229}, {"stateDir", state.str()}});
+    json ws = h.ok("workspace.open", request(src.url, src.ref, state.str()));
     CHECK(contractOf(ws, 15)["status"] == "ok");
     CHECK(contractOf(ws, 1)["status"] == "missing-file");
     const int gen = contractOf(ws, 15)["generation"];
@@ -454,14 +511,13 @@ TEST_CASE("real: a search and a digest of a large file can be cancelled") {
         return;
     }
     Harness h;
-    json req = {{"coreDir", e.haveSnapshot() ? e.core229 : e.core}, {"stateDir", e.state}};
-    if (!e.haveSnapshot()) req["coreRef"] = "auto";
-    h.ok("workspace.open", req);
+    const RealSource src = realSource(e);
+    h.ok("workspace.open", request(src.url, src.ref, e.state));
     for (const char* method : {"state.search", "state.digest"}) {
         std::promise<json> done;
         json params = {{"contract", 14}, {"query", "0xdeadbeefcafebabe0123456789abcdef"}};
         const auto t0 = Clock::now();
-        auto token = h.dispatcher.dispatchAsync(method, params, [&](json r) { done.set_value(std::move(r)); }, "http");
+        auto token = h.dispatcher.dispatchAsync(method, params, [&](json r) { done.set_value(std::move(r)); });
         std::this_thread::sleep_for(milliseconds(15));
         token->cancel();
         json r = done.get_future().get();

@@ -107,11 +107,11 @@ struct FsEntry {
     bool isDir = false;
     std::optional<uint64_t> size;
     std::optional<int64_t> mtimeMs;
+    // Files named contractNNNN.EEE: contract index and epoch extension.
+    std::optional<std::pair<uint32_t, uint32_t>> state;
 };
 
 struct PathHints {
-    bool isCoreRepo = false;   // contains src/contract_core/contract_def.h
-    bool isGitRepo = false;    // contains .git (directory or file)
     std::vector<uint32_t> stateEpochs;  // epochs of contractNNNN.EEE files directly inside, ascending
 };
 
@@ -129,7 +129,6 @@ struct FsListResult {
 };
 
 FsListResult listDirectory(const std::string& path, bool showHidden = false);
-PathHints pathHints(const std::string& dir);
 
 // ----------------------------------------------------------------------------------------------------------------
 // Paths
@@ -140,6 +139,9 @@ PathHints pathHints(const std::string& dir);
 std::string normalizePath(const std::string& path);
 std::optional<std::string> parentPath(const std::string& normalizedPath);
 std::string homeDir();
+// Per-user cache directory of the application: <cache base>/qstate-viewer (Linux: $XDG_CACHE_HOME or ~/.cache;
+// Windows: %LOCALAPPDATA%; macOS: ~/Library/Caches), a directory below the temp directory when nothing else is known.
+std::string defaultCacheDir();
 std::string currentDir();
 std::string platformName();   // "linux" | "windows" | "macos"
 char pathSeparator();

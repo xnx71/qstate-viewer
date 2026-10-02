@@ -743,9 +743,9 @@ std::optional<std::vector<std::string>> gccTokens(const std::string& core, const
 } // namespace
 
 TEST_CASE("pp real data: contract_def.h preprocesses cleanly with the msvc-like defines") {
-    const std::string core = qstate::testing::coreDir();
+    const std::string core = qstate::testing::coreRepo();
     if (core.empty()) {
-        MESSAGE("QSTATE_TEST_CORE_DIR not set, skipping");
+        MESSAGE("QSTATE_TEST_CORE_REPO not set, skipping");
         return;
     }
     const auto t0 = std::chrono::steady_clock::now();
@@ -782,9 +782,9 @@ TEST_CASE("pp real data: contract_def.h preprocesses cleanly with the msvc-like 
 }
 
 TEST_CASE("pp real data: token stream equals g++ -E for several define sets") {
-    const std::string core = qstate::testing::coreDir();
+    const std::string core = qstate::testing::coreRepo();
     if (core.empty()) {
-        MESSAGE("QSTATE_TEST_CORE_DIR not set, skipping");
+        MESSAGE("QSTATE_TEST_CORE_REPO not set, skipping");
         return;
     }
 #if defined(__unix__) || defined(__APPLE__)

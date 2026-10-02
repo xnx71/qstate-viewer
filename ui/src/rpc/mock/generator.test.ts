@@ -46,7 +46,7 @@ describe('identities', () => {
 });
 
 describe('byte generator', () => {
-  const ctx = { gen: 1, epoch: 192 };
+  const ctx = { gen: 1, epoch: 229 };
 
   it('is range independent: any window equals the matching slice of a larger window', () => {
     const w = buildWorld(1);
@@ -70,7 +70,7 @@ describe('byte generator', () => {
     const read = (seed: number, gen: number) => {
       const w = buildWorld(seed);
       const d = w.byIndex(1)!;
-      return bytesToHex(generateBytes({ type: d.root, salt: d.salt }, { gen, epoch: 192 }, 167_772_200, 192));
+      return bytesToHex(generateBytes({ type: d.root, salt: d.salt }, { gen, epoch: 229 }, 167_772_200, 229));
     };
     expect(read(1, 1)).toBe(read(1, 1));
     expect(read(1, 1)).not.toBe(read(2, 1));

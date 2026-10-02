@@ -19,18 +19,20 @@ std::string trimSeparators(std::string s) {
 }
 
 bool sameWorkspace(const WorkspaceRequest& a, const WorkspaceRequest& b) {
-    return trimSeparators(a.coreDir) == trimSeparators(b.coreDir) && trimSeparators(a.stateDir) == trimSeparators(b.stateDir);
+    return trimSeparators(a.core.repoUrl) == trimSeparators(b.core.repoUrl) && a.core.ref == b.core.ref &&
+           trimSeparators(a.statePath) == trimSeparators(b.statePath);
 }
 
 }  // namespace
 
 bool isValidTheme(const std::string& theme) { return theme == "dark" || theme == "light" || theme == "system"; }
 
+bool isComplete(const WorkspaceRequest& r) { return !r.core.repoUrl.empty() && !r.core.ref.empty() && !r.statePath.empty(); }
+
 void to_json(json& j, const WorkspaceRequest& r) {
     j = json::object();
-    j["coreDir"] = r.coreDir;
-    if (r.coreRef) j["coreRef"] = *r.coreRef;
-    j["stateDir"] = r.stateDir;
+    j["core"] = {{"repoUrl", r.core.repoUrl}, {"ref", r.core.ref}};
+    j["statePath"] = r.statePath;
     if (r.epoch) j["epoch"] = *r.epoch;
     if (!r.defines.empty()) j["defines"] = r.defines;
 }
@@ -38,9 +40,11 @@ void to_json(json& j, const WorkspaceRequest& r) {
 void from_json(const json& j, WorkspaceRequest& r) {
     r = WorkspaceRequest{};
     if (!j.is_object()) return;
-    if (auto it = j.find("coreDir"); it != j.end() && it->is_string()) r.coreDir = it->get<std::string>();
-    if (auto it = j.find("stateDir"); it != j.end() && it->is_string()) r.stateDir = it->get<std::string>();
-    if (auto it = j.find("coreRef"); it != j.end() && it->is_string()) r.coreRef = it->get<std::string>();
+    if (auto core = j.find("core"); core != j.end() && core->is_object()) {
+        if (auto it = core->find("repoUrl"); it != core->end() && it->is_string()) r.core.repoUrl = it->get<std::string>();
+        if (auto it = core->find("ref"); it != core->end() && it->is_string()) r.core.ref = it->get<std::string>();
+    }
+    if (auto it = j.find("statePath"); it != j.end() && it->is_string()) r.statePath = it->get<std::string>();
     if (auto it = j.find("epoch"); it != j.end() && it->is_number_integer()) r.epoch = it->get<int>();
     if (auto it = j.find("defines"); it != j.end() && it->is_array()) {
         for (const auto& d : *it) {
@@ -66,7 +70,7 @@ void from_json(const json& j, Settings& s) {
         for (const auto& e : *it) {
             WorkspaceRequest r;
             from_json(e, r);
-            if (r.coreDir.empty() || r.stateDir.empty()) continue;
+            if (!isComplete(r)) continue;
             if (std::none_of(s.recentWorkspaces.begin(), s.recentWorkspaces.end(),
                              [&](const WorkspaceRequest& x) { return sameWorkspace(x, r); })) {
                 s.recentWorkspaces.push_back(std::move(r));

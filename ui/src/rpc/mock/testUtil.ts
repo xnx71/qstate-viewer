@@ -4,15 +4,15 @@ import type { RpcError, Workspace, WorkspaceRequest } from '../contract';
 import { createMockBackend } from './backend';
 import type { MockBackend, MockOptions } from './backend';
 
-export const CORE = '/home/mock/qubic/core';
+export const REPO = 'https://github.com/qubic/core';
 export const STATE = '/home/mock/qubic/state';
 
 export function mk(options: MockOptions = {}): MockBackend {
-  return createMockBackend({ latencyMs: [0, 0], ...options });
+  return createMockBackend({ latencyMs: [0, 0], timeScale: 0, ...options });
 }
 
 export async function openDefault(b: MockBackend, extra: Partial<WorkspaceRequest> = {}): Promise<Workspace> {
-  return b.invoke('workspace.open', { coreDir: CORE, stateDir: STATE, ...extra });
+  return b.invoke('workspace.open', { core: { repoUrl: REPO, ref: 'auto' }, statePath: STATE, ...extra });
 }
 
 /** Awaits a promise that must reject and returns the plain RpcError. */

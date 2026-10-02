@@ -1,8 +1,5 @@
-// Glue between decode's abstract seams (ByteSource, IdentityCodec) and qstate::support. Only available when the
-// decode library was built with qstate::support (QSTATE_DECODE_HAS_SUPPORT).
+// Glue between decode's abstract seams (ByteSource, IdentityCodec) and qstate::support.
 #pragma once
-
-#if defined(QSTATE_DECODE_HAS_SUPPORT) && QSTATE_DECODE_HAS_SUPPORT
 
 #include <memory>
 
@@ -35,5 +32,3 @@ public:
 };
 
 } // namespace qstate::decode
-
-#endif

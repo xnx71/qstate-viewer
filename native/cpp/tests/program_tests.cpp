@@ -1,5 +1,5 @@
 // Real-data validation of the declaration parser / layout engine against the Qubic core headers:
-//  * g++ -E outputs (QSTATE_TEST_II_DIR) and the real pipeline (QSTATE_TEST_CORE_DIR through the preprocessor),
+//  * g++ -E outputs (QSTATE_TEST_II_DIR) and the real pipeline (QSTATE_TEST_CORE_REPO through the preprocessor),
 //  * contract table sizes vs real state files (QSTATE_TEST_STATE_DIR, epoch 229),
 //  * per-field offsets of all state types vs docs/research/data/contract-layouts-{a,b}.json and the g++ oracle files.
 // Every test skips (with a message) when its data is missing.
@@ -78,7 +78,6 @@ Dataset* coreDataset(const std::string& coreDir, const std::string& key) {
     return raw;
 }
 
-std::string v1303CoreDir() { return qstate::testing::envOr("QSTATE_TEST_CORE_V1303_DIR"); }
 
 struct ContractRow {
     std::string assetName;
@@ -390,8 +389,8 @@ TEST_CASE("program: HEAD layouts equal the ground truth JSON (a + b) and the g++
 }
 
 TEST_CASE("program: real pipeline (preprocessor + parser) on the HEAD core checkout") {
-    const std::string core = qstate::testing::coreDir();
-    if (core.empty()) { MESSAGE("QSTATE_TEST_CORE_DIR not set, skipping"); return; }
+    const std::string core = qstate::testing::coreRepo();
+    if (core.empty()) { MESSAGE("QSTATE_TEST_CORE_REPO not set, skipping"); return; }
     Dataset* ds = coreDataset(core, "head");
     REQUIRE(ds);
     Program& prog = *ds->prog;
@@ -415,8 +414,8 @@ TEST_CASE("program: real pipeline (preprocessor + parser) on the HEAD core check
 }
 
 TEST_CASE("program: real pipeline on the v1.303.2 checkout matches the state files") {
-    const std::string core = v1303CoreDir();
-    if (core.empty()) { MESSAGE("QSTATE_TEST_CORE_V1303_DIR not set, skipping"); return; }
+    const std::string core = qstate::testing::coreDir229();
+    if (core.empty()) { MESSAGE("QSTATE_TEST_CORE_DIR_229 not set, skipping"); return; }
     Dataset* ds = coreDataset(core, "v1303");
     REQUIRE(ds);
     CHECK(noWarnings(*ds));

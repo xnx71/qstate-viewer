@@ -10,7 +10,6 @@ import type {
   NodeInfo,
   TableInfo,
   TablePage,
-  TableQuery,
   TypeId,
   TypeInfo,
 } from "@/rpc/contract";
@@ -122,10 +121,6 @@ export function useTableInfo(contract: number, id: NodeId, view: string | undefi
   );
 }
 
-export function tablePageFetcher(query: TableQuery, signal?: AbortSignal) {
-  return () => invoke("table.rows", query, { signal });
-}
-
 // ---- type info (batched) -------------------------------------------------------
 
 const typeWaiters = new Map<number, { wsId: number; resolve: (t: TypeInfo) => void; reject: (e: unknown) => void }[]>();
@@ -163,10 +158,6 @@ function loadType(wsId: number, id: TypeId): Promise<TypeInfo> {
     typeWaiters.set(id, list);
     scheduleTypeFlush();
   });
-}
-
-export function fetchType(wsId: number, id: TypeId): Promise<TypeInfo> {
-  return typeQ.fetch(`t|${id}`, String(wsId), () => loadType(wsId, id));
 }
 
 export function useTypeInfo(typeId: TypeId | null | undefined): QueryResult<TypeInfo> {

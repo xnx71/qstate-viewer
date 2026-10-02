@@ -1,356 +1,239 @@
 import { useAtom, useAtomValue } from "jotai";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertCircleIcon, BoxIcon, ClockIcon, FolderOpenIcon, GitBranchIcon, Loader2Icon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AlertCircleIcon, BoxIcon, ChevronDownIcon, FolderOpenIcon, HistoryIcon, Loader2Icon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ERROR_HINTS, ERROR_TITLES } from "@/rpc/errors";
-import type { CoreVersion, WorkspaceRequest } from "@/rpc/contract";
-import { cn } from "@/lib/utils";
+import type { WorkspaceRequest } from "@/rpc/contract";
+import { explainError } from "@/rpc/errors";
 import { openWorkspace } from "@/store/actions";
-import { appInfoAtom, openDialogAtom, openPhaseAtom, settingsAtom, workspaceAtom } from "@/store/workspace";
+import { prefsAtom } from "@/store/prefs";
 import { store } from "@/store/store";
-import { DirBrowser } from "./DirBrowser";
-import { useCoreVersions, useFsListing } from "./useFs";
+import { appInfoAtom, coreProgressAtom, openDialogAtom, openPhaseAtom, settingsAtom, workspaceAtom } from "@/store/workspace";
+import { CoreSourcePanel } from "./CoreSourcePanel";
+import { formFromRequest, missingPart, type OpenForm, requestFromForm, type StateSelection } from "./form";
+import { useRepoSync } from "./hooks";
+import { baseName, parentPath, parseStateFileName, type Sep, shortenPath } from "./paths";
+import { inferMode, repoShortName } from "./refs";
+import { StatePanel } from "./StatePanel";
 
-type Target = "core" | "state";
+const NO_RECENTS: WorkspaceRequest[] = [];
 
-interface Form {
-  coreDir: string;
-  coreRef: string;
-  stateDir: string;
-  epoch: string;
-  defines: string;
-}
-
-const EMPTY: Form = { coreDir: "", coreRef: "", stateDir: "", epoch: "", defines: "" };
-
-export function formFromRequest(r: Partial<WorkspaceRequest>): Form {
-  return {
-    coreDir: r.coreDir ?? "",
-    coreRef: r.coreRef ?? "",
-    stateDir: r.stateDir ?? "",
-    epoch: r.epoch !== undefined ? String(r.epoch) : "",
-    defines: (r.defines ?? []).join(", "),
+export function OpenWorkspaceDialog() {
+  const [open, setOpen] = useAtom(openDialogAtom);
+  const ws = useAtomValue(workspaceAtom);
+  const close = () => {
+    if (store.get(openPhaseAtom).phase === "error") store.set(openPhaseAtom, { phase: "idle" });
+    setOpen(false);
   };
+  // Without a workspace there is nothing behind the dialog: it cannot be dismissed.
+  return (
+    <Dialog open={open} onOpenChange={(o) => (o ? setOpen(true) : ws && close())}>
+      <DialogContent className="flex h-[min(92vh,46rem)] w-[min(96vw,68rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none" showCloseButton={!!ws}>
+        {open && <DialogBody onClose={close} canClose={!!ws} />}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
-export function requestFromForm(f: Form): WorkspaceRequest {
-  const defines = f.defines
-    .split(/[\s,]+/)
-    .map((d) => d.trim())
-    .filter(Boolean);
-  const req: WorkspaceRequest = { coreDir: f.coreDir.trim(), stateDir: f.stateDir.trim() };
-  if (f.coreRef) req.coreRef = f.coreRef;
-  if (f.epoch) req.epoch = Number(f.epoch);
-  if (defines.length) req.defines = defines;
-  return req;
+/** Folder the browser starts in: the folder of the workspace being edited, else the last used one, else home. */
+function startDirOf(form: OpenForm, lastDir: string, sep: Sep): string {
+  const sel = form.selection;
+  if (!sel) return lastDir;
+  return sel.kind === "file" ? (parentPath(sel.path, sep) ?? sel.path) : sel.path;
 }
 
-function shorten(p: string, max = 38): string {
-  return p.length <= max ? p : `…${p.slice(p.length - max + 1)}`;
+function DialogBody({ onClose, canClose }: { onClose: () => void; canClose: boolean }) {
+  const info = useAtomValue(appInfoAtom);
+  const settings = useAtomValue(settingsAtom);
+  const ws = useAtomValue(workspaceAtom);
+  const phase = useAtomValue(openPhaseAtom);
+  const prefs = useAtomValue(prefsAtom);
+  const sep: Sep = info?.pathSeparator ?? "/";
+  const defaultRepo = info?.defaultRepoUrl ?? "";
+  const gitAvailable = info?.gitAvailable !== false;
+  const recents = settings?.recentWorkspaces ?? NO_RECENTS;
+
+  const [form, setForm] = useState<OpenForm>(() => formFromRequest(ws?.request ?? recents[0], defaultRepo));
+  const [startDir] = useState(() => startDirOf(form, prefs.browseDir, sep));
+  const { state: sync, sync: runSync, cancel: cancelSync } = useRepoSync();
+  const opening = phase.phase === "opening";
+  const url = form.repoUrl.trim();
+  const repo = sync.forUrl === url ? sync.repo : undefined;
+
+  const change = useCallback((patch: Partial<OpenForm>) => setForm((f) => ({ ...f, ...patch })), []);
+  const select = useCallback((selection: StateSelection) => setForm((f) => ({ ...f, selection })), []);
+
+  // sync the prefilled repository once when the dialog opens
+  useEffect(() => {
+    if (gitAvailable && url) void runSync(url);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- once, when the dialog opens
+  }, []);
+
+  // a remembered ref name that turns out to be a branch moves to the branch tab
+  useEffect(() => {
+    if (!repo) return;
+    setForm((f) => {
+      if (f.mode !== "tag") return f;
+      const m = inferMode(f.picks.tag, repo);
+      return m === "branch" ? { ...f, mode: "branch", picks: { ...f.picks, branch: f.picks.tag } } : f;
+    });
+  }, [repo]);
+
+  const req = requestFromForm(form);
+  const problem = !gitAvailable ? "git is required" : missingPart(form);
+  const canOpen = !!req && gitAvailable && !opening;
+  const submit = () => {
+    if (req && canOpen) void openWorkspace(req);
+  };
+
+  const recentDirs = useMemo(() => {
+    const dirs = recents.map((r) => (parseStateFileName(baseName(r.statePath)) ? (parentPath(r.statePath, sep) ?? r.statePath) : r.statePath));
+    return [...new Set(dirs)];
+  }, [recents, sep]);
+
+  const useRecent = (r: WorkspaceRequest) => {
+    const next = formFromRequest(r, defaultRepo, repo);
+    setForm(next);
+    if (next.repoUrl.trim() !== url && gitAvailable) void runSync(next.repoUrl);
+  };
+
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col" onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && submit()}>
+      <AnimatePresence>{opening && <OpeningOverlay startedAt={phase.startedAt} />}</AnimatePresence>
+      <header className="flex items-center gap-3 border-b px-4 py-2.5 pr-12">
+        <BoxIcon className="size-5 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1">
+          <DialogTitle className="text-base">{ws ? "Open workspace" : "Welcome to qstate-viewer"}</DialogTitle>
+          <DialogDescription className="truncate text-[0.82rem]">
+            A <b>core source</b> (git: its C++ headers define the contract layouts) plus <b>state files</b> (<code className="font-mono">contractNNNN.EEE</code>).
+          </DialogDescription>
+        </div>
+        <RecentMenu recents={recents} onPick={useRecent} />
+      </header>
+
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-x-4 gap-y-3 overflow-y-auto px-4 py-3 md:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] md:overflow-hidden">
+        <CoreSourcePanel form={form} onChange={change} gitAvailable={gitAvailable} sync={sync} onSync={() => void runSync(url)} onCancelSync={cancelSync} />
+        <StatePanel selection={form.selection} onSelect={select} startDir={startDir} sep={sep} homeDir={info?.homeDir ?? ""} lastDir={prefs.browseDir} recentDirs={recentDirs} />
+      </div>
+
+      {phase.phase === "error" && <OpenError message={phase.message} code={phase.code} />}
+
+      <footer className="flex items-center gap-2 border-t bg-muted/30 px-4 py-2.5">
+        <Input
+          value={form.defines}
+          onChange={(e) => change({ defines: e.target.value })}
+          placeholder="Defines (optional)"
+          aria-label="Extra preprocessor defines"
+          title="Extra preprocessor defines, e.g. INCLUDE_CONTRACT_TEST_EXAMPLES"
+          spellCheck={false}
+          className="h-7 w-44 font-mono text-[0.8rem]"
+        />
+        <p className="min-w-0 flex-1 truncate text-[0.82rem] text-muted-foreground" data-testid="open-summary">
+          {problem ?? <Summary req={req as WorkspaceRequest} />}
+        </p>
+        {canClose && (
+          <Button variant="ghost" onClick={onClose} disabled={opening}>
+            Cancel
+          </Button>
+        )}
+        <Button onClick={submit} disabled={!canOpen} title="Ctrl+Enter">
+          {opening ? <Loader2Icon className="animate-spin" /> : <FolderOpenIcon />} Open workspace
+        </Button>
+      </footer>
+    </div>
+  );
 }
 
-function refLabel(v: CoreVersion): string {
-  const parts = [v.ref || "working tree"];
-  if (v.version) parts.push(`v${v.version}`);
-  if (v.epoch !== undefined) parts.push(`epoch ${v.epoch}`);
-  return parts.join(" · ");
+function Summary({ req }: { req: WorkspaceRequest }) {
+  return (
+    <>
+      <span className="font-mono text-foreground">{repoShortName(req.core.repoUrl)}</span> @ <span className="font-mono text-foreground">{req.core.ref.length >= 40 ? req.core.ref.slice(0, 7) : req.core.ref}</span> + <span className="font-mono">{shortenPath(req.statePath, 36)}</span>
+      {req.epoch !== undefined && <> (epoch {req.epoch})</>}
+    </>
+  );
 }
 
-const STEPS = ["Reading core headers", "Preprocessing and parsing declarations", "Computing type layouts", "Scanning state files"];
+function RecentMenu({ recents, onPick }: { recents: WorkspaceRequest[]; onPick: (r: WorkspaceRequest) => void }) {
+  if (recents.length === 0) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="outline" size="sm" aria-label="Recent workspaces">
+            <HistoryIcon /> Recent <ChevronDownIcon className="size-3" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-[26rem] max-w-[90vw]">
+        <DropdownMenuLabel>Recent workspaces</DropdownMenuLabel>
+        {recents.map((r) => (
+          <DropdownMenuItem key={JSON.stringify(r)} onClick={() => onPick(r)} className="flex-col items-start gap-0">
+            <span className="w-full truncate font-mono text-[0.85rem]">
+              {repoShortName(r.core.repoUrl)} @ {r.core.ref.length >= 40 ? r.core.ref.slice(0, 7) : r.core.ref}
+            </span>
+            <span className="w-full truncate font-mono text-[0.78rem] text-muted-foreground">
+              {shortenPath(r.statePath, 52)}
+              {r.epoch !== undefined ? ` · epoch ${r.epoch}` : ""}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
-function Progress({ startedAt }: { startedAt: number }) {
+function OpenError({ message, code }: { message: string; code: string }) {
+  const e = explainError({ code, message });
+  return (
+    <div role="alert" className="mx-4 mb-2 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-[0.88rem]">
+      <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+      <div className="min-w-0">
+        <div className="font-semibold text-destructive">{e.title}</div>
+        <div className="break-words">{e.message}</div>
+        <div className="text-[0.8rem] text-muted-foreground">{e.hint}</div>
+      </div>
+    </div>
+  );
+}
+
+const PHASES = { clone: "Cloning the repository", fetch: "Fetching updates", export: "Exporting sources", parse: "Extracting contract layouts" } as const;
+
+function OpeningOverlay({ startedAt }: { startedAt: number }) {
+  const progress = useAtomValue(coreProgressAtom);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 120);
+    const t = setInterval(() => setNow(Date.now()), 200);
     return () => clearInterval(t);
   }, []);
-  const elapsed = now - startedAt;
-  const step = Math.min(STEPS.length - 1, Math.floor(elapsed / 700));
+  const pct = progress?.percent;
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-xl bg-popover/92 backdrop-blur-[2px]"
+      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-popover/92 backdrop-blur-[2px]"
       role="status"
       aria-live="polite"
     >
       <Loader2Icon className="size-8 animate-spin text-primary" />
       <div className="text-center">
         <div className="text-base font-semibold">Opening workspace…</div>
-        <div className="mt-1 text-[0.92rem] text-muted-foreground">{STEPS[step]}</div>
-      </div>
-      <div className="relative h-1 w-64 overflow-hidden rounded-full bg-muted">
-        <motion.div className="absolute inset-y-0 w-1/3 rounded-full bg-primary" animate={{ left: ["-33%", "100%"] }} transition={{ duration: 1.3, repeat: Infinity, ease: "easeInOut" }} />
-      </div>
-      <div className="font-mono text-[0.8rem] text-muted-foreground tabular">{(elapsed / 1000).toFixed(1)} s</div>
-    </motion.div>
-  );
-}
-
-export function OpenWorkspaceDialog() {
-  const [open, setOpen] = useAtom(openDialogAtom);
-  const phase = useAtomValue(openPhaseAtom);
-  const info = useAtomValue(appInfoAtom);
-  const settings = useAtomValue(settingsAtom);
-  const ws = useAtomValue(workspaceAtom);
-  const [form, setForm] = useState<Form>(EMPTY);
-  const [active, setActive] = useState<Target>("core");
-  const [showHidden, setShowHidden] = useState(false);
-  const [prefilled, setPrefilled] = useState(false);
-  const sep = info?.pathSeparator ?? "/";
-
-  // Prefill once per dialog opening: startup args > current workspace > most recent.
-  useEffect(() => {
-    if (!open) {
-      setPrefilled(false);
-      return;
-    }
-    if (prefilled || !info) return;
-    const startup = info.startup;
-    const seed = startup.coreDir || startup.stateDir ? startup : (ws?.request ?? settings?.recentWorkspaces[0] ?? {});
-    setForm(formFromRequest(seed));
-    setPrefilled(true);
-    store.set(openPhaseAtom, { phase: "idle" });
-  }, [open, prefilled, info, settings, ws]);
-
-  const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
-  const coreList = useFsListing(form.coreDir, showHidden);
-  const stateList = useFsListing(form.stateDir, showHidden);
-  const coreHints = coreList.data && !coreList.error && coreList.forKey === form.coreDir ? coreList.data.hints : undefined;
-  const stateHints = stateList.data && !stateList.error && stateList.forKey === form.stateDir ? stateList.data.hints : undefined;
-  const versions = useCoreVersions(form.coreDir, !!coreHints?.isCoreRepo || !!coreHints?.isGitRepo);
-  const epochs = stateHints?.stateEpochs ?? [];
-  const opening = phase.phase === "opening";
-  const canOpen = form.coreDir.trim() !== "" && form.stateDir.trim() !== "" && !opening;
-
-  const versionItems = useMemo(() => {
-    const items: { value: string; label: string }[] = [{ value: "", label: "Working tree (as on disk)" }];
-    if (info?.gitAvailable !== false) items.push({ value: "auto", label: "Auto: newest tag matching the state epoch" });
-    for (const r of versions.data?.refs ?? []) items.push({ value: r.ref, label: refLabel(r) });
-    return items;
-  }, [versions.data, info?.gitAvailable]);
-
-  const activeListing = active === "core" ? coreList : stateList;
-  const submit = () => {
-    if (canOpen) void openWorkspace(requestFromForm(form));
-  };
-  const recents = settings?.recentWorkspaces ?? [];
-  const firstRun = !ws;
-
-  return (
-    <Dialog open={open} onOpenChange={(o) => (ws || o ? setOpen(o) : undefined)}>
-      <DialogContent className="flex max-h-[min(90vh,46rem)] w-[min(96vw,66rem)] max-w-none flex-col gap-3 overflow-hidden p-0 sm:max-w-none" showCloseButton={!!ws}>
-        <AnimatePresence>{opening && <Progress startedAt={phase.startedAt} />}</AnimatePresence>
-        <DialogHeader className="border-b px-5 pt-4 pb-3">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <BoxIcon className="size-5 text-primary" />
-            {firstRun ? "Welcome to qstate-viewer" : "Open workspace"}
-          </DialogTitle>
-          <DialogDescription>
-            A workspace pairs a <b>Qubic core repository</b> (its C++ headers define every contract layout) with a directory of <b>state files</b>{" "}
-            (<code className="font-mono">contractNNNN.EEE</code>).
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto px-5 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-          <div className="space-y-4">
-            {recents.length > 0 && (
-              <div>
-                <Label icon={<ClockIcon />}>Recent workspaces</Label>
-                <ul className="mt-1.5 space-y-1" aria-label="Recent workspaces">
-                  {recents.slice(0, 4).map((r, i) => (
-                    <li key={`${r.coreDir}|${r.stateDir}|${r.epoch ?? ""}|${i}`}>
-                      <button
-                        type="button"
-                        onClick={() => setForm(formFromRequest(r))}
-                        onDoubleClick={() => void openWorkspace(r)}
-                        className="flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left text-[0.85rem] hover:bg-accent"
-                      >
-                        <FolderOpenIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate font-mono">
-                          {shorten(r.coreDir, 26)} <span className="text-muted-foreground">+</span> {shorten(r.stateDir, 26)}
-                        </span>
-                        <span className="shrink-0 font-mono text-[0.78rem] text-muted-foreground">
-                          {r.coreRef ? `${r.coreRef} · ` : ""}
-                          {r.epoch !== undefined ? `e${r.epoch}` : "latest"}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div>
-              <Label icon={<GitBranchIcon />}>Core repository</Label>
-              <Input
-                value={form.coreDir}
-                onFocus={() => setActive("core")}
-                onChange={(e) => set({ coreDir: e.target.value, coreRef: "" })}
-                placeholder="/path/to/qubic/core"
-                aria-label="Core repository directory"
-                spellCheck={false}
-                className="mt-1.5 font-mono"
-                onKeyDown={(e) => e.key === "Enter" && submit()}
-              />
-              <HintLine ok={coreHints?.isCoreRepo} loading={coreList.loading} text={coreHints ? (coreHints.isCoreRepo ? "Qubic core repository found" : "Not a Qubic core repository (src/contract_core/contract_def.h missing)") : "Type a path or browse on the right"} />
-            </div>
-
-            <div>
-              <Label>Core version</Label>
-              <Select value={form.coreRef} items={versionItems} onValueChange={(v) => set({ coreRef: v ?? "" })} disabled={!coreHints?.isCoreRepo}>
-                <SelectTrigger className="mt-1.5 w-full font-mono" aria-label="Core version">
-                  <SelectValue placeholder="Working tree" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {versionItems.map((v) => (
-                    <SelectItem key={v.value || "worktree"} value={v.value} className="font-mono">
-                      {v.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="mt-1 text-[0.8rem] text-muted-foreground">
-                {versions.loading
-                  ? "Reading tags…"
-                  : info?.gitAvailable === false
-                    ? "git is not available: only the working tree can be used."
-                    : versions.data
-                      ? `${versions.data.refs.length} tags${versions.data.worktree.version ? ` · working tree is v${versions.data.worktree.version}, epoch ${versions.data.worktree.epoch ?? "?"}` : ""}. Pick a tag matching the state files' epoch.`
-                      : "Reads the sources from a git tag instead of the working tree."}
-              </p>
-            </div>
-
-            <div>
-              <Label icon={<FolderOpenIcon />}>State directory</Label>
-              <Input
-                value={form.stateDir}
-                onFocus={() => setActive("state")}
-                onChange={(e) => set({ stateDir: e.target.value, epoch: "" })}
-                placeholder="/path/to/state"
-                aria-label="State directory"
-                spellCheck={false}
-                className="mt-1.5 font-mono"
-                onKeyDown={(e) => e.key === "Enter" && submit()}
-              />
-              <HintLine ok={epochs.length > 0} loading={stateList.loading} text={stateHints ? (epochs.length ? `State files for epochs ${epochs.join(", ")}` : "No contractNNNN.EEE files in this directory") : "Type a path or browse on the right"} />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Epoch</Label>
-                <Select
-                  value={form.epoch}
-                  items={[{ value: "", label: "Latest" }, ...epochs.slice().reverse().map((e) => ({ value: String(e), label: `Epoch ${e}` }))]}
-                  onValueChange={(v) => set({ epoch: v ?? "" })}
-                  disabled={epochs.length === 0}
-                >
-                  <SelectTrigger className="mt-1.5 w-full font-mono" aria-label="Epoch">
-                    <SelectValue placeholder="Latest" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">Latest{epochs.length ? ` (${epochs[epochs.length - 1]})` : ""}</SelectItem>
-                    {epochs
-                      .slice()
-                      .reverse()
-                      .map((e) => (
-                        <SelectItem key={e} value={String(e)} className="font-mono">
-                          Epoch {e}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Extra defines</Label>
-                <Input
-                  value={form.defines}
-                  onChange={(e) => set({ defines: e.target.value })}
-                  placeholder="e.g. FOO, BAR"
-                  aria-label="Extra preprocessor defines"
-                  spellCheck={false}
-                  className="mt-1.5 font-mono"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="min-h-64 md:min-h-0">
-            <div className="mb-1.5 flex items-center justify-between">
-              <Label>Browse: {active === "core" ? "core repository" : "state directory"}</Label>
-              <div className="flex gap-1">
-                {(["core", "state"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setActive(t)}
-                    className={cn("rounded px-1.5 py-0.5 text-[0.8rem]", active === t ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted")}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="h-[22rem] md:h-[calc(100%-1.75rem)]">
-              <DirBrowser
-                title={active}
-                listing={activeListing.data}
-                error={activeListing.error}
-                loading={activeListing.loading}
-                sep={sep}
-                showHidden={showHidden}
-                onShowHidden={setShowHidden}
-                onNavigate={(p) => (active === "core" ? set({ coreDir: p, coreRef: "" }) : set({ stateDir: p, epoch: "" }))}
-              />
-            </div>
-          </div>
+        <div className="mt-1 text-[0.92rem]" data-testid="open-progress">
+          {progress ? PHASES[progress.phase] : "Starting"}
         </div>
-
-        {phase.phase === "error" && (
-          <div role="alert" className="mx-5 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-[0.92rem]">
-            <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
-            <div className="min-w-0">
-              <div className="font-semibold text-destructive">{ERROR_TITLES[phase.code as keyof typeof ERROR_TITLES] ?? "Could not open workspace"}</div>
-              <div className="break-words">{phase.message}</div>
-              <div className="text-[0.82rem] text-muted-foreground">{ERROR_HINTS[phase.code as keyof typeof ERROR_HINTS] ?? ""}</div>
-            </div>
-          </div>
+        <div className="max-w-[28rem] truncate text-[0.82rem] text-muted-foreground">{progress?.message ?? " "}</div>
+      </div>
+      <div className="relative h-1 w-72 overflow-hidden rounded-full bg-muted">
+        {pct === undefined ? (
+          <motion.div className="absolute inset-y-0 w-1/3 rounded-full bg-primary" animate={{ left: ["-33%", "100%"] }} transition={{ duration: 1.3, repeat: Infinity, ease: "easeInOut" }} />
+        ) : (
+          <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${pct}%` }} />
         )}
-
-        <DialogFooter className="mx-0 mb-0 rounded-none px-5 py-3">
-          {ws && (
-            <Button variant="ghost" onClick={() => setOpen(false)} disabled={opening}>
-              Cancel
-            </Button>
-          )}
-          <Button onClick={submit} disabled={!canOpen}>
-            {opening ? <Loader2Icon className="animate-spin" /> : <FolderOpenIcon />} Open workspace
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function Label({ children, icon }: { children: React.ReactNode; icon?: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-1.5 text-[0.78rem] font-semibold tracking-wider text-muted-foreground uppercase [&_svg]:size-3.5">
-      {icon}
-      {children}
-    </div>
-  );
-}
-
-function HintLine({ ok, loading, text }: { ok: boolean | undefined; loading: boolean; text: string }) {
-  return (
-    <p className={cn("mt-1 flex items-center gap-1.5 text-[0.8rem]", ok ? "text-ok" : "text-muted-foreground")}>
-      {loading ? <Loader2Icon className="size-3 animate-spin" /> : <span className={cn("size-1.5 rounded-full", ok ? "bg-ok" : "bg-muted-foreground/40")} />}
-      {text}
-    </p>
+      </div>
+      <div className="font-mono text-[0.8rem] text-muted-foreground tabular">{((now - startedAt) / 1000).toFixed(1)} s</div>
+    </motion.div>
   );
 }

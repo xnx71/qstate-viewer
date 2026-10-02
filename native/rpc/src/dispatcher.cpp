@@ -43,9 +43,8 @@ std::vector<std::string> Dispatcher::methods() const {
     return names;
 }
 
-nlohmann::json Dispatcher::dispatch(const std::string& method, const nlohmann::json& params,
-                                    const std::string& transport) const {
-    CallContext ctx(method, std::make_shared<CancelToken>(), transport);
+nlohmann::json Dispatcher::dispatch(const std::string& method, const nlohmann::json& params) const {
+    CallContext ctx(method, std::make_shared<CancelToken>());
     return dispatch(method, params, ctx);
 }
 
@@ -75,9 +74,9 @@ nlohmann::json Dispatcher::dispatch(const std::string& method, const nlohmann::j
 }
 
 std::shared_ptr<CancelToken> Dispatcher::dispatchAsync(const std::string& method, nlohmann::json params,
-                                                       Callback callback, std::string transport) {
+                                                       Callback callback) {
     auto token = std::make_shared<CancelToken>();
-    Job job{method, std::move(params), std::move(callback), token, std::move(transport)};
+    Job job{method, std::move(params), std::move(callback), token};
     bool rejected = false;
     {
         std::lock_guard lock(poolMutex_);
@@ -134,7 +133,7 @@ void Dispatcher::workerLoop() {
         if (job.token->cancelled()) {
             response = cancelledResponse();
         } else {
-            CallContext ctx(job.method, job.token, job.transport);
+            CallContext ctx(job.method, job.token);
             response = dispatch(job.method, job.params, ctx);
             std::lock_guard lock(poolMutex_);
             running_.erase(std::remove(running_.begin(), running_.end(), job.token), running_.end());

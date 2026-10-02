@@ -8,11 +8,8 @@
 
 namespace qstate::gui {
 
-SelftestSession::SelftestSession(rpc::Dispatcher& dispatcher, rpc::EventBus& events, bool bench) : bench_(bench) {
+SelftestSession::SelftestSession(rpc::Dispatcher& dispatcher, rpc::EventBus& events) {
     using nlohmann::json;
-    dispatcher.registerMethod("selftest.config", [this](const json&, rpc::CallContext&) {
-        return json{{"bench", bench_}};
-    });
     dispatcher.registerMethod("selftest.echo", [](const json& params, rpc::CallContext&) {
         auto it = params.find("value");
         return it == params.end() ? json(nullptr) : *it;

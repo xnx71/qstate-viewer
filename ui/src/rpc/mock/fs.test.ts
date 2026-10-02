@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mk, rejection, CORE, STATE } from './testUtil';
+import { mk, rejection, STATE } from './testUtil';
 
 describe('fs.list', () => {
   const b = mk();
@@ -50,43 +50,29 @@ describe('fs.list', () => {
     expect(plain.entries.some((e) => e.name.startsWith('.'))).toBe(false);
   });
 
-  it('reports hints for core repos and state directories', async () => {
-    const core = await b.invoke('fs.list', { path: CORE });
-    expect(core.hints).toEqual({ isCoreRepo: true, isGitRepo: true, stateEpochs: [] });
-    const old = await b.invoke('fs.list', { path: '/home/mock/qubic/core-old' });
-    expect(old.hints.isCoreRepo && old.hints.isGitRepo).toBe(true);
-    const src = await b.invoke('fs.list', { path: '/home/mock/qubic/core-src' });
-    expect(src.hints.isCoreRepo).toBe(true);
-    expect(src.hints.isGitRepo).toBe(false);
+  it('reports state epochs and marks contract state files', async () => {
     const state = await b.invoke('fs.list', { path: STATE });
-    expect(state.hints.stateEpochs).toEqual([190, 191, 192]);
-    expect(state.hints.isCoreRepo).toBe(false);
+    expect(state.hints.stateEpochs).toEqual([227, 228, 229]);
     const names = state.entries.map((e) => e.name);
-    expect(names).toContain('contract0000.192');
-    expect(names).toContain('contract0001.192');
-    expect(names).toContain('spectrum.192');
-    expect(names).toContain('universe.192');
+    expect(names).toContain('contract0000.229');
+    expect(names).toContain('spectrum.229');
+    expect(names).toContain('universe.229');
+    const qx = state.entries.find((e) => e.name === 'contract0001.229');
+    expect(qx?.state).toEqual({ index: 1, epoch: 229 });
+    expect(state.entries.filter((e) => e.state).length).toBe(26);
+    expect(state.entries.find((e) => e.name === 'spectrum.229')?.state).toBeUndefined();
     expect((await b.invoke('fs.list', { path: '/home/mock/qubic/state-empty' })).hints.stateEpochs).toEqual([]);
-    const repo = await b.invoke('fs.list', { path: '/home/mock/work/web-app' });
-    expect(repo.hints).toMatchObject({ isGitRepo: true, isCoreRepo: false });
-  });
-
-  it('core checkout contains the expected sources', async () => {
-    const c = await b.invoke('fs.list', { path: CORE + '/src/contract_core' });
-    expect(c.entries.some((e) => e.name === 'contract_def.h')).toBe(true);
-    const contracts = await b.invoke('fs.list', { path: CORE + '/src/contracts' });
-    expect(contracts.entries.some((e) => e.name === 'Qx.h')).toBe(true);
-    const git = await b.invoke('fs.list', { path: CORE + '/.git' });
-    expect(git.entries.length).toBeGreaterThan(0);
+    expect((await b.invoke('fs.list', { path: '/home/mock/qubic/snapshots/epoch-226' })).hints.stateEpochs).toEqual([226]);
+    expect((await b.invoke('fs.list', { path: '/home/mock/work/web-app' })).hints).toEqual({ stateEpochs: [] });
   });
 
   it('state file sizes equal sizeof(state type) except the mismatching file', async () => {
     const l = await b.invoke('fs.list', { path: STATE });
     const size = (n: string) => l.entries.find((e) => e.name === n)?.size;
-    expect(size('contract0001.192')).toBeGreaterThan(300_000_000);
-    expect(size('contract0003.192')).toBeLessThan(156192);
-    expect(size('contract0003.191')).not.toBe(size('contract0003.192'));
-    expect(l.entries.some((e) => e.name === 'contract0007.192')).toBe(false);
+    expect(size('contract0001.229')).toBeGreaterThan(300_000_000);
+    expect(size('contract0003.229')).toBeLessThan(156192);
+    expect(size('contract0003.228')).not.toBe(size('contract0003.229'));
+    expect(l.entries.some((e) => e.name === 'contract0007.229')).toBe(false);
   });
 
   it('errors: unknown path, file path, bad params', async () => {
@@ -96,54 +82,14 @@ describe('fs.list', () => {
   });
 });
 
-describe('core.versions', () => {
-  const b = mk();
-
-  it('returns the working tree and ~14 tags, newest first', async () => {
-    const v = await b.invoke('core.versions', { coreDir: CORE });
-    expect(v.worktree).toMatchObject({ ref: '', kind: 'worktree', version: '1.306.0', epoch: 192 });
-    expect(v.refs).toHaveLength(14);
-    const epochs = v.refs.map((r) => r.epoch as number);
-    expect(epochs).toEqual([...epochs].sort((a, c) => c - a));
-    expect(Math.min(...epochs)).toBe(186);
-    expect(Math.max(...epochs)).toBe(192);
-    expect(new Set(epochs).size).toBe(7);
-    const dates = v.refs.map((r) => r.date as string);
-    expect(dates).toEqual([...dates].sort().reverse());
-    for (const r of v.refs) {
-      expect(r.kind).toBe('tag');
-      expect(r.ref).toMatch(/^v\d+\.\d+\.\d+$/);
-      expect(r.version).toBe(r.ref.slice(1));
-      expect(r.sha).toMatch(/^[0-9a-f]{40}$/);
-    }
-  });
-
-  it('honours limit', async () => {
-    const v = await b.invoke('core.versions', { coreDir: CORE, limit: 3 });
-    expect(v.refs.map((r) => r.ref)).toEqual(['v1.306.0', 'v1.305.2', 'v1.305.0']);
-  });
-
-  it('returns no refs for non-git or non-core directories, not_found for unknown ones', async () => {
-    expect((await b.invoke('core.versions', { coreDir: '/home/mock/qubic/core-src' })).refs).toEqual([]);
-    expect((await b.invoke('core.versions', { coreDir: '/home/mock/Documents' })).refs).toEqual([]);
-    expect((await rejection(b.invoke('core.versions', { coreDir: '/home/mock/none' }))).code).toBe('not_found');
-    expect((await rejection(b.invoke('core.versions', { coreDir: CORE, limit: 0 }))).code).toBe('invalid_params');
-  });
-
-  it('older clone has an older working tree and fewer tags', async () => {
-    const v = await b.invoke('core.versions', { coreDir: '/home/mock/qubic/core-old' });
-    expect(v.worktree.epoch).toBe(189);
-    expect(v.refs.every((r) => (r.epoch as number) <= 189)).toBe(true);
-    expect(v.refs.length).toBeLessThan(14);
-  });
-});
-
 describe('app.info, settings, errors', () => {
-  it('app.info reports the mock machine and the startup options', async () => {
-    const b = mk({ startup: { coreDir: CORE, epoch: 191 } });
+  it('app.info reports the mock machine, git and the default repository', async () => {
+    const b = mk();
     const i = await b.invoke('app.info', {});
     expect(i).toMatchObject({ transport: 'mock', platform: 'linux', homeDir: '/home/mock', cwd: '/home/mock/work', pathSeparator: '/', gitAvailable: true });
-    expect(i.startup).toEqual({ coreDir: CORE, epoch: 191 });
+    expect(i.defaultRepoUrl).toBe('https://github.com/qubic/core');
+    b.setSim({ gitMissing: true });
+    expect((await b.invoke('app.info', {})).gitAvailable).toBe(false);
   });
 
   it('settings: ui merges one level deep, null removes a key, unknown theme ignored', async () => {

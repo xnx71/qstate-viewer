@@ -1,6 +1,8 @@
 // Drives the REAL UI inside the REAL desktop webview (WebKitGTK) against REAL data.
-// Injected by `qstate-viewer --selftest-script ui/scripts/webview-e2e.js --core ... --state ...` (see scripts/webview-e2e.sh);
-// the host provides window.__qstate_log(text) and window.__qstate_exit(code). Plain script, no modules.
+// Injected by the native runner (QSTATE_SELFTEST_SCRIPT) right after `window.__QSTATE_E2E = {repoUrl, ref, statePath}`
+// (repoUrl may be a local git clone, ref e.g. "auto", statePath a folder with epoch-229 files). The script drives the
+// open dialog like a user: type the repository, sync, choose the ref, browse to the folder, use it, open.
+// The host provides window.__qstate_log(text) and window.__qstate_exit(code). Plain script, no modules.
 // Lines "SHOT <name>" tell the runner to capture the X display; the script then waits so the frame is final.
 (function () {
   "use strict";
@@ -131,14 +133,111 @@
       log("app.info " + JSON.stringify({ platform: info.platform, version: info.version, transport: info.transport }));
     });
 
-    await step("workspace opens from the startup arguments: 29 contracts", async function () {
+    var cfg = window.__QSTATE_E2E || {};
+    var byText = function (sel, text, root) {
+      return $$(sel, root).find(function (e) {
+        return e.textContent.indexOf(text) >= 0 && e.getClientRects().length > 0;
+      });
+    };
+    var click = async function (sel, text, what) {
+      var el = await until(function () {
+        return byText(sel, text);
+      }, what || text);
+      el.click();
+      return el;
+    };
+    var syncIdle = function () {
+      return $("[data-testid=sync-summary]") && !$("[role=progressbar]");
+    };
+
+    await step("open dialog is shown at start (no arguments)", async function () {
+      check(cfg.repoUrl && cfg.statePath, "window.__QSTATE_E2E has repoUrl and statePath: " + JSON.stringify(cfg));
+      await until(function () {
+        return $('input[aria-label="Repository URL"]');
+      }, "repository field", 30000);
+      await shot("00-dialog");
+    });
+
+    await step("type the repository, sync it (" + cfg.repoUrl + ")", async function () {
+      var input = $('input[aria-label="Repository URL"]');
+      setValue(input, cfg.repoUrl);
+      await sleep(150);
+      key(input, "Enter");
+      await sleep(250);
+      await until(syncIdle, "sync finished with a tag list", 300000);
+      var m = /(\d+) tags/.exec($("[data-testid=sync-summary]").innerText);
+      check(m && Number(m[1]) > 0, "sync summary lists tags: " + $("[data-testid=sync-summary]").innerText);
+      log("synced: " + $("[data-testid=sync-summary]").innerText.trim());
+    });
+
+    await step("browse to the state folder: type the path, Enter", async function () {
+      var input = $('input[aria-label="State path"]');
+      setValue(input, cfg.statePath);
+      await sleep(100);
+      key(input, "Enter");
+      await until(function () {
+        return $$("[role=option][data-state]").length > 0;
+      }, "state files listed in " + cfg.statePath, 30000);
+      check($$("[role=option][data-state]").some(function (e) {
+        return /contract0001\.229/.test(e.textContent);
+      }), "contract0001.229 listed");
+    });
+
+    await step("use this folder, pick epoch 229", async function () {
+      await click("button", "Use this folder");
+      await until(function () {
+        return $("[data-testid=selection][data-scope=dir]");
+      }, "folder selected");
+      var chip = byText("[aria-label=Epoch] button", "229");
+      if (chip) chip.click();
+      await sleep(200);
+      check(/epoch 229/.test($("[data-testid=open-summary]").innerText) || !$("[aria-label=Epoch]"), "summary: " + $("[data-testid=open-summary]").innerText);
+    });
+
+    await step("choose the ref: " + cfg.ref, async function () {
+      var ref = cfg.ref || "auto";
+      if (ref === "auto") {
+        await click("[role=tab]", "Auto");
+        await until(function () {
+          return /resolves to tag/.test(($("[data-testid=auto-info]") || {}).innerText || "");
+        }, "auto resolves to a tag", 10000);
+        log("auto: " + $("[data-testid=auto-info]").innerText.replace(/\s+/g, " "));
+      } else if (/^[0-9a-f]{7,40}$/i.test(ref)) {
+        await click("[role=tab]", "Commit");
+        await until(function () {
+          return $('input[aria-label^="Search commits"]');
+        }, "commit search");
+        setValue($('input[aria-label^="Search commits"]'), ref);
+        await click("[role=option]", "Use commit");
+      } else {
+        await click("[role=tab]", "Tags");
+        setValue($('input[aria-label^="Search tags"]'), ref);
+        await sleep(200);
+        var opt = byText('[role=listbox][aria-label="Tags"] [role=option]', ref);
+        if (!opt) {
+          await click("[role=tab]", "Branches");
+          opt = await until(function () {
+            return byText('[role=listbox][aria-label="Branches"] [role=option]', ref);
+          }, "tag or branch " + ref);
+        }
+        opt.click();
+      }
+      await shot("00b-dialog-ready");
+    });
+
+    await step("open the workspace: 29 contracts", async function () {
+      await click("[role=dialog] button", "Open workspace");
       await until(function () {
         return $$("[role=option][data-contract]").length === 29;
-      }, "29 contracts in the sidebar", 90000);
+      }, "29 contracts in the sidebar", 300000);
       var ok = $$("[role=option][data-contract]").filter(function (e) {
         return /\bok\b/.test(e.innerText);
       }).length;
       check(ok === 29, "contracts with status ok: " + ok);
+      var chip = $("[data-testid=workspace-chip]").innerText;
+      log("header: " + chip.replace(/\s+/g, " "));
+      check(/epoch 229/.test(chip), "header shows epoch 229: " + chip);
+      check(/(tag|branch|commit) /.test(chip), "header shows the ref kind: " + chip);
       await sleep(600);
       await shot("01-workspace");
     });
@@ -298,6 +397,32 @@
       await sleep(500);
       await shot("10-light");
       $("[aria-label='Toggle theme']").click();
+    });
+
+    await step("single state file: reopen the dialog, pick contract0001.229", async function () {
+      $("[aria-label='Workspace: change']").click();
+      await until(function () {
+        return $('input[aria-label="State path"]');
+      }, "dialog");
+      var input = $('input[aria-label="State path"]');
+      setValue(input, cfg.statePath);
+      await sleep(100);
+      key(input, "Enter");
+      var row = await until(function () {
+        return byText("[role=option][data-state]", "contract0001.229");
+      }, "contract0001.229 row", 30000);
+      row.click();
+      await until(function () {
+        return $("[data-testid=selection][data-scope=file]");
+      }, "file selected");
+      await click("[role=dialog] button", "Open workspace");
+      await until(function () {
+        return $$("[role=option][data-contract]").length === 1;
+      }, "one contract in the sidebar", 300000);
+      var ws = await rpc("workspace.get");
+      check(ws.state.scope === "file" && ws.contracts.length === 1, "scope file with one contract");
+      await sleep(400);
+      await shot("11-single-file");
     });
 
     var slow = results.filter(function (r) {

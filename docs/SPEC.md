@@ -26,13 +26,16 @@ compiler knows: the complete type definitions reachable from `contract_def.h`, w
 ## 2. Pipeline
 
 ```
+git repository ──► local bare mirror ──► exported tree of one commit
+  (GitHub qubic/core by default)                          │
+                                                          ▼
 core sources ──► preprocessor ──► declaration parser ──► types + constants ──► layout ──► Schema
   (contract_def.h as the root translation unit)                                              │
-state dir ──► contractNNNN.EEE ──► FileReader ──────────────────────────────► decoder ◄──────┘
+state dir / file ──► contractNNNN.EEE ──► FileReader ───────────────────────► decoder ◄──────┘
                                                                                  │
                                         RPC services (contract.ts) ◄─────────────┘
                                                 │
-                       webview bind / HTTP+SSE  │
+                                  webview bind  │
                                                 ▼
                                              React UI
 ```
@@ -42,20 +45,18 @@ state dir ──► contractNNNN.EEE ──► FileReader ───────�
 ```
 CMakeLists.txt, cmake/            build skeleton (QstateModule.cmake: qstate_add_library / qstate_add_tests)
 native/
-  third_party/                    vendored headers: nlohmann/json, doctest, cpp-httplib
-  testing/                        doctest main + test_env.h (QSTATE_TEST_CORE_DIR / QSTATE_TEST_STATE_DIR)
+  third_party/                    vendored headers: nlohmann/json, doctest, webview
+  testing/                        doctest main, test_env.h (QSTATE_TEST_* variables), git_fixture.h (throw-away git repos)
   cpp/                            generic C++ front-end                       namespace qstate::cpp
   schema/                         Qubic schema extraction + schema model      namespace qstate::schema
-  support/                        K12, identity, files, watcher, git, settings namespace qstate::support
+  support/                        K12, identity, files, watcher, git + mirrors, settings   namespace qstate::support
   decode/                         state decoding, containers, tables, search  namespace qstate::decode
   rpc/                            dispatcher + event bus                      namespace qstate::rpc
   service/                        RPC methods of contract.ts                  namespace qstate::service
-  httpd/                          HTTP + SSE transport (dev)                  namespace qstate::httpd
-  cli/                            qstate-cli
-  gui/                            qstate-viewer (webview host)
+  gui/                            qstate-viewer (webview host, the only executable)
 ui/                               Vite + React app; ui/src/rpc/contract.ts is the RPC contract
-scripts/                          developer scripts (sysroot bootstrap, oracle check, dev runner)
-docs/                             this spec and derived documentation
+scripts/                          sysroot bootstrap, real-webview test runners, xwd2png
+docs/                             this spec and derived documentation, docs/research/ (reference + test data)
 ```
 
 Every native module has the same shape: `include/qstate/<module>/*.h`, `src/*.cpp`, `tests/*.cpp`,
@@ -64,14 +65,15 @@ Every native module has the same shape: `include/qstate/<module>/*.h`, `src/*.cp
 Allowed dependencies (arrows = "may include / link"):
 
 ```
-cpp ◄── schema ◄── decode ◄── service ──► rpc ◄── httpd
-          support ◄──┘  ▲        │                  ▲
-                        └────────┘        cli ──────┤ (cli links service, httpd)
-                                          gui ──────┘ (gui links service, rpc, webview)
+cpp ◄── schema ◄── decode ◄── service ──► rpc
+          support ◄──┘  ▲        │          ▲
+                        └────────┘          │
+                                   gui ─────┘ (gui links service, rpc, webview)
 ```
 
 `cpp` knows nothing about Qubic. `schema` is the only module that knows Qubic source conventions.
-`decode` knows the QPI container semantics. `rpc` depends only on nlohmann/json.
+`decode` knows the QPI container semantics. `rpc` depends only on nlohmann/json. `support` is the only module that
+starts processes (`git`) or touches the file system for the application.
 
 ## 4. Conventions
 
@@ -84,8 +86,13 @@ cpp ◄── schema ◄── decode ◄── service ──► rpc ◄── 
   `support/src/platform_*.cpp`-style files; Windows and macOS variants may be stubs that compile).
 - Never copy code from the Qubic core repository (license). Algorithms are re-implemented from their public
   specifications (KangarooTwelve) or from the documented behaviour.
-- Tests: doctest. Unit tests use synthetic inputs. Integration tests read real data from
-  `QSTATE_TEST_CORE_DIR` / `QSTATE_TEST_STATE_DIR` (see `native/testing/test_env.h`) and skip when unset.
+- Tests: doctest. Unit tests use synthetic inputs; git behaviour is tested against throw-away repositories made with the
+  real `git` (`native/testing/git_fixture.h`; a local path is a valid repository URL, so no test needs the network).
+  Integration tests read real data from `QSTATE_TEST_CORE_REPO` / `QSTATE_TEST_STATE_DIR` / `QSTATE_TEST_CORE_DIR_229`
+  (see `native/testing/test_env.h`) and skip when unset; `QSTATE_TEST_NETWORK=1` additionally runs the flow against
+  github.com.
+- Product shape: a GUI application and nothing else. The executable takes no arguments; the only hooks are the test
+  environment variables listed in docs/HOST.md ("Testing").
 
 ---
 
@@ -95,11 +102,11 @@ cpp ◄── schema ◄── decode ◄── service ──► rpc ◄── 
 | --- | --- |
 | `cpp` | lexer, preprocessor (token-identical to `g++ -E` on core HEAD and v1.303.2), tolerant declaration parser, constant evaluator, template instantiation, MSVC x86-64 layout engine. Whole HEAD unit: ~130 ms preprocess + ~50 ms parse + ~20 ms layout. |
 | `schema` | `extractSchema()`: contract table + layouts + QPI roles. All 29 epoch-229 file sizes equal the derived sizes; offsets equal the independent g++/clang oracle (`docs/research/data`). Extracts 172 of 207 core tags (all from v1.201 on). |
-| `support` | KangarooTwelve (matches all 29 node state digests, 1 GB in ~0.2 s with threads), identities, pread file reader, directory scan, polling watcher, git helper with export cache, settings store. |
+| `support` | KangarooTwelve (matches all 29 node state digests, 1 GB in ~0.2 s with threads), identities, pread file reader, directory scan, polling watcher, git helper (`GitRepo`: refs, `git grep` of version facts, log, export) and git mirrors (`GitMirrorStore`: clone / fetch with progress and cancellation), settings store. |
 | `decode` | lazy node tree, logical / raw views, HashMap / HashSet / Collection / LinkedList decoding (cross-checked against Python reference decoders on real files), native sort / filter tables, byte search, locate. |
-| `rpc`, `httpd`, `gui` | dispatcher + worker pool + event bus, HTTP + SSE transport, webview host (verified under xvfb with WebKitGTK 2.52), sysroot bootstrap without root. |
-| `service`, `cli` | all methods of `contract.ts`; workspace lifecycle, version auto-pick, live events; `qstate-cli`. Opening the real 229 workspace: ~200 ms. |
-| `ui` | React app with mock / HTTP / webview transports; single-file build (~1.1 MB, 350 KB gzip). |
+| `rpc`, `gui` | dispatcher + worker pool + event bus, webview host (verified under xvfb with WebKitGTK 2.52), sysroot bootstrap without root. |
+| `service` | all methods of `contract.ts`; core sources from git (mirror, tag / branch / commit / auto, export cache), workspace lifecycle for a directory or a single state file, live events for state files. Opening the real 229 workspace: ~200 ms with a warm mirror. |
+| `ui` | React app with mock / webview transports; single-file build (~1.1 MB, 350 KB gzip). |
 
 Verified platform: Linux x86-64. Windows / macOS code exists (`support/src/platform_win32.cpp`, webview CMake
 branches) but has never been compiled.

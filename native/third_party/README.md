@@ -6,7 +6,6 @@ Header-only libraries, checked in so the native build works offline. Licenses ar
 | --- | --- | --- | --- |
 | nlohmann/json | 3.12.0 | `<nlohmann/json.hpp>` | https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp |
 | doctest | 2.5.3 | `<doctest/doctest.h>` | https://raw.githubusercontent.com/doctest/doctest/v2.5.3/doctest/doctest.h |
-| cpp-httplib | 0.58.0 | `<httplib/httplib.h>` | https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.58.0/httplib.h |
 | webview/webview | 0.12.0 | `<webview/webview.h>` | https://raw.githubusercontent.com/webview/webview/0.12.0/core/include/webview/webview.h |
 
 SHA-256 of the files as downloaded:
@@ -14,7 +13,6 @@ SHA-256 of the files as downloaded:
 ```
 aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63  include/nlohmann/json.hpp
 cfd518a3ef90f67e1f3ba514df23fb3627437de1a2feeba78cf5062a40021421  include/doctest/doctest.h
-aa14e7e7bd2703694e0a6b6855af3b8c406102ab1fc56ac905fe33619b31faa5  include/httplib/httplib.h
 b1ff6e11431d031e5f7917e5301f4bcdf3910a2763a0720abfd291994eee7f7b  webview/include/webview/webview.h
 22c4c38a605ae5362bdbd795b4358f3599c7a7e58d4824c4ed55e3be192386e0  webview/LICENSE
 ```

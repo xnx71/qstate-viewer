@@ -1,7 +1,8 @@
-// Test fixtures: a tiny fake core tree and tiny state files written into a temporary directory, an event collector
-// and helpers to call the service through a dispatcher.
+// Test fixtures: a tiny fake core as a git repository (the "remote": a plain path is a valid repository URL), tiny
+// state files in temporary directories, an event collector and helpers to call the service through a dispatcher.
 #pragma once
 
+#include "git_fixture.h"
 #include "qstate/rpc/dispatcher.h"
 #include "qstate/rpc/event_bus.h"
 #include "qstate/service/service.h"
@@ -110,6 +111,40 @@ inline void writeFakeCore(const fs::path& root, int epoch = 5, bool extraField =
     writeFile(root / "src/public_settings.h", fakePublicSettings(epoch));
 }
 
+// The fake core repository:
+//   tag v5.0.0 (epoch 5)  <-  tag v5.0.1 (epoch 5, newer)  <-  tag v9.0.0 = main (epoch 9, B has a second field)
+//   branch dev: one commit on top of v5.0.1 (epoch 7)
+// `repo.sha("v5.0.1")` etc. are the commits of these names.
+class FakeCoreRepo {
+public:
+    explicit FakeCoreRepo(const fs::path& dir) : git(dir) {
+        writeFakeCore(dir, 5);
+        shaV500 = git.commit("core epoch 5");
+        git.tag("v5.0.0");
+        writeFile(dir / "src/public_settings.h", fakePublicSettings(5) + "// patch\n");
+        shaV501 = git.commit("core epoch 5, patch");
+        git.tag("v5.0.1", /*annotated=*/true);
+        git.checkoutNew("dev");
+        writeFakeCore(dir, 7);
+        shaDev = git.commit("work on epoch 7");
+        git.checkout("main");
+        writeFakeCore(dir, 9, /*extraField=*/true);
+        shaV900 = git.commit("core epoch 9");
+        git.tag("v9.0.0");
+    }
+    std::string url() const { return git.url(); }
+
+    qstate::testing::GitFixtureRepo git;
+    std::string shaV500, shaV501, shaV900, shaDev;
+};
+
+// One fake core for the whole process (immutable: tests that change the upstream make their own FakeCoreRepo).
+inline const FakeCoreRepo& sharedCore() {
+    static const TempDir* dir = new TempDir();  // lives until the process ends
+    static const FakeCoreRepo repo(dir->path() / "core");
+    return repo;
+}
+
 inline std::vector<std::uint8_t> patternBytes(std::size_t size, std::uint8_t seed) {
     std::vector<std::uint8_t> v(size);
     for (std::size_t i = 0; i < size; ++i) v[i] = static_cast<std::uint8_t>((i * 7 + seed) & 0xFF);
@@ -197,24 +232,22 @@ struct Harness {
     rpc::Dispatcher dispatcher{4};
     rpc::EventBus bus;
     std::unique_ptr<Service> service;
-    TempDir scratch; // settings file and git export cache live here
+    TempDir scratch; // settings file and the git mirrors / exports (cache) live here
 
     explicit Harness(const std::function<void(ServiceConfig&)>& tweak = {}) {
         ServiceConfig config;
-        config.transport = "http";
         config.settingsPath = (scratch.path() / "settings.json").string();
         config.cacheDir = (scratch.path() / "cache").string();
         config.watcher.pollInterval = std::chrono::milliseconds(20);
         config.watcher.settle = std::chrono::milliseconds(60);
         config.watcher.settleLarge = std::chrono::milliseconds(120);
-        config.sourceDebounce = std::chrono::milliseconds(100);
         if (tweak) tweak(config);
         service = std::make_unique<Service>(config);
         service->registerAll(dispatcher, bus);
     }
 
     // Returns the whole response ({"result"} or {"error"}).
-    json call(const std::string& method, const json& params = json::object()) { return dispatcher.dispatch(method, params, "http"); }
+    json call(const std::string& method, const json& params = json::object()) { return dispatcher.dispatch(method, params); }
 
     // Returns the result; fails the test with the error message otherwise.
     json ok(const std::string& method, const json& params = json::object()) {
@@ -231,6 +264,24 @@ struct Harness {
         return r["error"]["code"].get<std::string>();
     }
 };
+
+// A workspace request for the shared fake core and a fresh directory with the epoch-5 state files.
+struct Fixture {
+    TempDir state;
+    const FakeCoreRepo& core = sharedCore();
+    Fixture() { writeFakeState(state.path()); }
+    static json requestFor(const std::string& repoUrl, const std::string& ref, const std::string& statePath) {
+        return {{"core", {{"repoUrl", repoUrl}, {"ref", ref}}}, {"statePath", statePath}};
+    }
+    json request(const std::string& ref = "v5.0.0") const { return requestFor(core.url(), ref, state.str()); }
+};
+
+inline bool hasDiagnostic(const json& ws, const std::string& severity, const std::string& text) {
+    for (const json& d : ws["diagnostics"]) {
+        if (d["severity"] == severity && d["message"].get<std::string>().find(text) != std::string::npos) return true;
+    }
+    return false;
+}
 
 inline json contractOf(const json& workspace, unsigned index) {
     for (const json& c : workspace["contracts"]) {

@@ -1,7 +1,6 @@
 #include "qstate/gui/assets.h"
 #include "qstate/gui/bridge.h"
 #include "qstate/gui/event_pump.h"
-#include "qstate/gui/options.h"
 #include "qstate/gui/selftest.h"
 #include "qstate/rpc/framing.h"
 
@@ -13,60 +12,6 @@
 
 using namespace qstate;
 using nlohmann::json;
-
-namespace {
-
-gui::ParseResult parse(std::vector<std::string> args) {
-    return gui::parseArgs(args);
-}
-
-} // namespace
-
-TEST_CASE("command line") {
-    auto r = parse({"--core", "/core", "--ref", "auto", "--state=/state", "--epoch", "199", "--serve", "8787",
-                    "--dev-url", "http://localhost:5173", "--size", "1000x700", "--workers", "2", "--debug"});
-    REQUIRE(r.error.empty());
-    CHECK(*r.options.startup.coreDir == "/core");
-    CHECK(*r.options.startup.coreRef == "auto");
-    CHECK(*r.options.startup.stateDir == "/state");
-    CHECK(*r.options.startup.epoch == 199);
-    CHECK(*r.options.servePort == 8787);
-    CHECK(r.options.devUrl == "http://localhost:5173");
-    CHECK(r.options.width == 1000);
-    CHECK(r.options.height == 700);
-    CHECK(r.options.workers == 2);
-    CHECK(r.options.debug);
-
-    auto defaults = parse({});
-    REQUIRE(defaults.error.empty());
-    CHECK_FALSE(defaults.options.startup.coreDir.has_value());
-    CHECK_FALSE(defaults.options.servePort.has_value());
-    CHECK_FALSE(defaults.options.selftest);
-
-    CHECK(parse({"--selftest-bench", "--headless-selftest", "--selftest-hold", "500"}).options.selftestHoldMs == 500);
-    CHECK(parse({"--help"}).options.help);
-    CHECK(parse({"--version"}).options.version);
-    CHECK(*parse({"--serve", "0"}).options.servePort == 0);
-    CHECK(parse({"--selftest-script", "/tmp/x.js"}).options.scriptFile == "/tmp/x.js");
-}
-
-TEST_CASE("command line errors") {
-    CHECK_FALSE(parse({"--core"}).error.empty());
-    CHECK_FALSE(parse({"--epoch", "x"}).error.empty());
-    CHECK_FALSE(parse({"--epoch", "-3"}).error.empty());
-    CHECK_FALSE(parse({"--serve", "70000"}).error.empty());
-    CHECK_FALSE(parse({"--size", "10x10"}).error.empty());
-    CHECK_FALSE(parse({"--size", "wide"}).error.empty());
-    CHECK_FALSE(parse({"--workers", "0"}).error.empty());
-    CHECK_FALSE(parse({"--bogus"}).error.empty());
-    CHECK_FALSE(parse({"positional"}).error.empty());
-    CHECK_FALSE(parse({"--dev-url", "ftp://x"}).error.empty());
-    CHECK_FALSE(parse({"--dev-url", "http://x", "--ui-dir", "d"}).error.empty());
-    CHECK_FALSE(parse({"--headless-selftest", "--ui-dir", "d"}).error.empty());
-    CHECK_FALSE(parse({"--selftest-script"}).error.empty());
-    CHECK_FALSE(parse({"--selftest-script", "a.js", "--headless-selftest"}).error.empty());
-    CHECK(gui::usage().find("--headless-selftest") != std::string::npos);
-}
 
 TEST_CASE("bridge arguments") {
     gui::InvokeCall call;
@@ -199,8 +144,7 @@ TEST_CASE("event pump never delivers after destruction and drops the oldest when
 TEST_CASE("selftest methods") {
     rpc::Dispatcher d;
     rpc::EventBus bus;
-    gui::SelftestSession session(d, bus, /*bench=*/true);
-    CHECK(d.dispatch("selftest.config", json::object())["result"]["bench"] == true);
+    gui::SelftestSession session(d, bus);
     CHECK(d.dispatch("selftest.echo", json{{"value", "x"}})["result"] == "x");
     CHECK(d.dispatch("selftest.fail", json::object())["error"]["data"]["detail"] == 42);
     CHECK(d.dispatch("selftest.blob", json{{"bytes", 1000}})["result"].get<std::string>().size() == 1000);

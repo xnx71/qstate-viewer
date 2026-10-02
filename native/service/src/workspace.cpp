@@ -31,16 +31,7 @@ const char* otherKindName(support::OtherFileKind kind) {
 }
 
 bool watchedName(const std::string& name) {
-    switch (support::parseStateFileName(name).kind) {
-    case support::FileNameKind::ContractState:
-    case support::FileNameKind::Spectrum:
-    case support::FileNameKind::Universe:
-    case support::FileNameKind::ContractExecFees:
-    case support::FileNameKind::Archive:
-        return true;
-    default:
-        return false;
-    }
+    return support::parseStateFileName(name).kind == support::FileNameKind::ContractState;
 }
 
 } // namespace
@@ -59,19 +50,23 @@ const schema::Schema& Workspace::emptySchema() {
 }
 
 std::shared_ptr<Workspace> Workspace::create(std::uint64_t id, support::WorkspaceRequest request,
-                                             std::shared_ptr<const CoreBundle> core, support::StateDirScan scan,
-                                             std::optional<std::uint32_t> epochExt, WorkspaceDeps deps,
+                                             std::shared_ptr<const CoreBundle> core, support::StateDirScan scan, Scope scope,
+                                             std::optional<std::uint32_t> epochExt, std::optional<std::uint32_t> fileIndex,
+                                             WorkspaceDeps deps,
                                              const std::map<std::uint32_t, std::uint64_t>& previousGenerations) {
     std::shared_ptr<Workspace> ws(new Workspace());
     ws->id_ = id;
     ws->request_ = std::move(request);
     ws->core_ = std::move(core);
     ws->scan_ = std::move(scan);
+    ws->scope_ = scope;
     ws->epochExt_ = epochExt;
+    ws->fileIndex_ = fileIndex;
     ws->deps_ = std::move(deps);
 
     std::map<std::uint32_t, Entry> byIndex;
     for (const schema::ContractSchema& c : ws->schema().contracts) {
+        if (scope == Scope::File && fileIndex && c.index != *fileIndex) continue;
         Entry e;
         e.index = c.index;
         e.contract = &c;
@@ -119,7 +114,7 @@ const Workspace::Entry* Workspace::find(std::uint32_t index) const {
 std::pair<const char*, std::string> Workspace::statusOf(const Entry& e) const {
     const std::string epochText = epochExt_ ? std::to_string(*epochExt_) : std::string("?");
     const LoadedCore& core = core_->loaded;
-    const std::string coreText = "core sources " + (core.info.ref.empty() ? std::string("(working tree)") : "'" + core.info.ref + "'") +
+    const std::string coreText = "core sources '" + core.info.ref + "'" +
                                  (core.info.version.empty() ? "" : " version " + core.info.version) +
                                  (core.info.epoch ? ", epoch " + std::to_string(*core.info.epoch) : "");
     if (e.contract == nullptr) {
@@ -143,7 +138,7 @@ std::pair<const char*, std::string> Workspace::statusOf(const Entry& e) const {
     if (core.info.epoch && epochExt_ && static_cast<std::uint32_t>(*core.info.epoch) % 1000u != *epochExt_) {
         message += " The state files are from epoch " + epochText + " but the core sources are for epoch " +
                    std::to_string(*core.info.epoch) + ": the struct layout probably changed in between; choose a core version with EPOCH " +
-                   epochText + " (coreRef \"auto\").";
+                   epochText + " (ref \"auto\").";
     } else if (e.file->size < c.expectedSize) {
         message += " The file is smaller: it may still be written, or the layout shrank compared with the version that wrote it.";
     } else {
@@ -212,7 +207,9 @@ std::vector<Diagnostic> Workspace::workspaceDiagnostics() const {
         d.message = std::move(message);
         out.push_back(std::move(d));
     };
-    if (scan_.epochs.empty()) {
+    if (scope_ == Scope::File) {
+        if (!scan_.find(epochExt_.value_or(0))) warn("the state file " + request_.statePath + " does not exist");
+    } else if (scan_.epochs.empty()) {
         warn("no contractNNNN.EEE state files found in " + scan_.dir);
     } else if (epochExt_) {
         const support::EpochFileSet* set = scan_.find(*epochExt_);
@@ -232,7 +229,10 @@ nlohmann::json Workspace::toJson() const {
     j["id"] = id_;
     j["request"] = request_;
     j["core"] = core_->loaded.info;
-    nlohmann::json state = {{"dir", scan_.dir}, {"epochsAvailable", scan_.epochNumbers()}, {"otherFiles", nlohmann::json::array()}};
+    nlohmann::json state = {{"dir", scan_.dir},
+                            {"scope", scope_ == Scope::File ? "file" : "dir"},
+                            {"epochsAvailable", scope_ == Scope::File && epochExt_ ? std::vector<std::uint32_t>{*epochExt_} : scan_.epochNumbers()},
+                            {"otherFiles", nlohmann::json::array()}};
     if (epochExt_) {
         state["epoch"] = *epochExt_;
         for (const support::OtherFileEntry& o : scan_.othersOfEpoch(*epochExt_)) {
@@ -366,13 +366,10 @@ void Workspace::startWatching(EventSink sink) {
     const std::uint64_t id = id_;
     watcher_ = std::make_unique<support::DirWatcher>([id, sink = std::move(sink)](const support::WatchEvent& e) { sink(id, e); },
                                                      deps_.watcher);
-    watcher_->addDirectory(scan_.dir, "state", watchedName);
-    const LoadedCore& loaded = core_->loaded;
-    if (loaded.workingTree) {
-        std::vector<std::string> paths;
-        paths.reserve(loaded.files.size());
-        for (const std::string& rel : loaded.files) paths.push_back(loaded.info.sourceDir + "/" + rel);
-        watcher_->addFiles(paths, "src");
+    if (scope_ == Scope::File) {
+        watcher_->addFile(request_.statePath, "state");
+    } else {
+        watcher_->addDirectory(scan_.dir, "state", watchedName);
     }
     watcher_->start();
 }

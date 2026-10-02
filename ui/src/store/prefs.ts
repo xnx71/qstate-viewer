@@ -18,6 +18,8 @@ export interface Prefs {
   showOffsets: boolean;
   /** Inspector tab. */
   inspectorTab: "overview" | "type" | "bytes";
+  /** Folder the state browser was last used in. */
+  browseDir: string;
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -26,6 +28,7 @@ export const DEFAULT_PREFS: Prefs = {
   animations: true,
   showOffsets: true,
   inspectorTab: "overview",
+  browseDir: "",
 };
 
 /** Defensive parse of settings.ui (free-form record owned by us, possibly written by older versions). */
@@ -43,6 +46,7 @@ export function parsePrefs(ui: Record<string, unknown> | undefined): Prefs {
   if (typeof ui["showOffsets"] === "boolean") out.showOffsets = ui["showOffsets"];
   const tab = ui["inspectorTab"];
   if (tab === "overview" || tab === "type" || tab === "bytes") out.inspectorTab = tab;
+  if (typeof ui["browseDir"] === "string") out.browseDir = ui["browseDir"];
   return out;
 }
 

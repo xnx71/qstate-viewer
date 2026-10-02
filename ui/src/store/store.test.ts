@@ -8,31 +8,40 @@ import { store } from "./store";
 import { closeTable, openTable, openTablesAtom, centerTabAtom, tableKey, patchTableUi, tableUiAtomFamily } from "./table";
 import { revealNode, selectNode, setSelectedView, toggleRow, treeAtomFamily, loadTotal } from "./tree";
 import { gotoMatch, runSearch, searchAtom, setSearchInput } from "./search";
-import { contractsAtom, openPhaseAtom, pendingChangesAtom, selectedContractAtom, workspaceAtom } from "./workspace";
+import { prefsAtom } from "./prefs";
+import { appInfoAtom, contractsAtom, coreProgressAtom, openDialogAtom, openPhaseAtom, pendingChangesAtom, selectedContractAtom, workspaceAtom } from "./workspace";
 
-const REQ = { coreDir: "/home/mock/qubic/core", stateDir: "/home/mock/qubic/state" };
+const REQ = { core: { repoUrl: "https://github.com/qubic/core", ref: "auto" }, statePath: "/home/mock/qubic/state" };
 const QX = 1;
 
 let mock: ReturnType<typeof createMockTransport>;
 
 beforeAll(async () => {
-  mock = createMockTransport({ latencyMs: [0, 0], startup: REQ });
+  mock = createMockTransport({ latencyMs: [0, 0], timeScale: 0 });
   setTransport(mock);
   await bootstrap();
-  // wait for the auto-open triggered by the startup arguments
-  for (let i = 0; i < 50 && !store.get(workspaceAtom); i++) await new Promise((r) => setTimeout(r, 20));
 });
 
 describe("workspace lifecycle", () => {
-  it("auto-opens from startup arguments and selects the first healthy contract", async () => {
+  it("first run: no workspace, the open dialog is shown", () => {
+    expect(store.get(workspaceAtom)).toBeNull();
+    expect(store.get(openDialogAtom)).toBe(true);
+    expect(store.get(appInfoAtom)?.defaultRepoUrl).toBe("https://github.com/qubic/core");
+  });
+
+  it("opens a workspace, selects the first healthy contract and remembers the folder", async () => {
+    expect(await openWorkspace(REQ)).toBe(true);
     const ws = store.get(workspaceAtom);
+    expect(store.get(openDialogAtom)).toBe(false);
+    expect(store.get(prefsAtom).browseDir).toBe("/home/mock/qubic/state");
+    expect(store.get(coreProgressAtom)?.phase).toBe("parse");
     expect(ws?.contracts.length).toBeGreaterThan(5);
     expect(store.get(selectedContractAtom)).toBe(QX);
     expect(store.get(openPhaseAtom)).toEqual({ phase: "idle" });
   });
 
   it("reports failures through the open phase atom", async () => {
-    const ok = await openWorkspace({ coreDir: "/home/mock/Documents", stateDir: REQ.stateDir });
+    const ok = await openWorkspace({ ...REQ, statePath: "/home/mock/Documents" });
     expect(ok).toBe(false);
     const phase = store.get(openPhaseAtom);
     expect(phase.phase).toBe("error");
@@ -180,5 +189,39 @@ describe("search store", () => {
     expect(store.get(searchAtom).active).toBe(-1);
     expect(store.get(searchAtom).query).toBe("QWALLET"); // the query stays
     selectContract(QX);
+  });
+});
+
+describe("bootstrap with a recent workspace", () => {
+  const boot = async (opts: Parameters<typeof createMockTransport>[0], git = true) => {
+    const t = createMockTransport({ latencyMs: [0, 0], timeScale: 0, ...opts });
+    if (!git) t.backend.setSim({ gitMissing: true });
+    setTransport(t);
+    store.set(workspaceAtom, null);
+    store.set(openDialogAtom, false);
+    await bootstrap();
+  };
+  const settings = { recentWorkspaces: [REQ] };
+
+  it("opens it right away when that is quick, without showing the dialog", async () => {
+    await boot({ settings });
+    expect(store.get(workspaceAtom)?.request.statePath).toBe(REQ.statePath);
+    expect(store.get(openDialogAtom)).toBe(false);
+  });
+
+  it("shows the dialog when git is missing or the open fails", async () => {
+    await boot({ settings }, false);
+    expect(store.get(workspaceAtom)).toBeNull();
+    expect(store.get(openDialogAtom)).toBe(true);
+    await boot({ settings: { recentWorkspaces: [{ ...REQ, statePath: "/gone" }] } });
+    expect(store.get(workspaceAtom)).toBeNull();
+    expect(store.get(openDialogAtom)).toBe(true);
+    expect(store.get(openPhaseAtom).phase).toBe("error");
+  });
+
+  it("shows the dialog when opening is slow (mirror has to be cloned first)", async () => {
+    await boot({ settings, timeScale: 40 });
+    expect(store.get(openDialogAtom)).toBe(true);
+    expect(store.get(openPhaseAtom).phase).toBe("opening");
   });
 });

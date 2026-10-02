@@ -1,4 +1,4 @@
-// Server side of `--headless-selftest`: a few extra RPC methods used by the built-in test page
+// Server side of the bridge self test (QSTATE_SELFTEST=1): a few extra RPC methods used by the built-in test page
 // (src/selftest_page.cpp) and the verdict the page reports.
 #pragma once
 
@@ -12,7 +12,6 @@
 namespace qstate::gui {
 
 // Registered methods (all prefixed "selftest."):
-//   config {}                      -> {bench: bool}
 //   echo {value}                   -> value
 //   slow {ms}                      -> "done" after sleeping ms (cancellable)
 //   fail {}                        -> rpc::Error(invalid_params, "expected failure", {"detail": 42})
@@ -23,7 +22,7 @@ namespace qstate::gui {
 // Thread safety: all members may be called from any thread.
 class SelftestSession {
 public:
-    SelftestSession(rpc::Dispatcher& dispatcher, rpc::EventBus& events, bool bench);
+    SelftestSession(rpc::Dispatcher& dispatcher, rpc::EventBus& events);
 
     // Blocks until the page reported or `timeoutSec` elapsed. Returns true when a report arrived.
     bool waitForReport(int timeoutSec);
@@ -38,7 +37,6 @@ private:
     bool reported_ = false;
     bool passed_ = false;
     nlohmann::json report_;
-    bool bench_;
 };
 
 } // namespace qstate::gui

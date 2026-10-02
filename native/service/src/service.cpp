@@ -1,6 +1,7 @@
 #include "qstate/service/service.h"
 
 #include "module.h"
+#include "qstate/support/dir_scan.h"
 #include "workspace_manager.h"
 
 #include <algorithm>
@@ -18,6 +19,7 @@ constexpr ModuleFn kModules[] = {
     registerAppMethods,
     registerSettingsMethods,
     registerFsMethods,
+    registerCoreMethods,
     registerWorkspaceMethods,
     registerStateMethods,
 };
@@ -31,7 +33,8 @@ const std::vector<std::string>& Service::contractMethods() {
         "settings.get",
         "settings.update",
         "fs.list",
-        "core.versions",
+        "core.sync",
+        "core.commits",
         "workspace.open",
         "workspace.get",
         "workspace.reload",
@@ -54,7 +57,13 @@ Service::Service(ServiceConfig config) : config_(std::make_shared<const ServiceC
     state_ = std::make_shared<ServiceState>();
     state_->config = config_;
     state_->settings = std::make_shared<support::SettingsStore>(config_->settingsPath);
-    state_->workspaces = std::make_shared<WorkspaceManager>(config_);
+    state_->core = std::make_shared<CoreLoader>(
+        config_->cacheDir.empty() ? support::defaultCacheDir() : config_->cacheDir, config_->git);
+    state_->workspaces = std::make_shared<WorkspaceManager>(config_, state_->core);
+}
+
+nlohmann::json Service::appInfo() const {
+    return makeAppInfo(*config_, state_->core->gitAvailable());
 }
 
 Service::~Service() {

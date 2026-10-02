@@ -11,10 +11,10 @@
 namespace qstate::service {
 
 using rpc::Code;
-using Clock = std::chrono::steady_clock;
 
-WorkspaceManager::WorkspaceManager(std::shared_ptr<const ServiceConfig> config)
+WorkspaceManager::WorkspaceManager(std::shared_ptr<const ServiceConfig> config, std::shared_ptr<CoreLoader> core)
     : config_(std::move(config)),
+      core_(std::move(core)),
       cache_(std::make_shared<decode::DecodeCache>(config_->decodeCacheBytes)),
       identity_(std::make_shared<decode::SupportIdentityCodec>()) {
     worker_ = std::thread([this] { workerMain(); });
@@ -88,7 +88,13 @@ void WorkspaceManager::close() {
     if (old) old->stop();
     std::lock_guard lock(queueMutex_);
     queue_.clear();
-    sourceDue_.reset();
+}
+
+void WorkspaceManager::emitProgress(const std::string& phase, const std::string& message, std::optional<int> percent) {
+    nlohmann::json payload = {{"phase", phase}, {"message", message}};
+    if (percent) payload["percent"] = *percent;
+    std::lock_guard lock(mutex_);
+    for (rpc::EventBus* bus : buses_) bus->emit("core.progress", payload);
 }
 
 void WorkspaceManager::emitIfCurrent(std::uint64_t workspaceId, const char* name, const nlohmann::json& payload) {
@@ -113,41 +119,91 @@ void WorkspaceManager::startWatching(const std::shared_ptr<Workspace>& ws) {
 void WorkspaceManager::onWatchEvent(std::uint64_t workspaceId, const support::WatchEvent& event) {
     {
         std::lock_guard lock(queueMutex_);
-        if (event.tag == "src") {
-            sourceDue_ = Clock::now() + config_->sourceDebounce;
-            sourceWorkspace_ = workspaceId;
-        } else {
-            QueuedEvent q;
-            q.workspaceId = workspaceId;
-            q.event = event;
-            queue_.push_back(std::move(q));
-        }
+        QueuedEvent q;
+        q.workspaceId = workspaceId;
+        q.event = event;
+        queue_.push_back(std::move(q));
     }
     queueCv_.notify_one();
 }
 
+namespace {
+
+std::string trimmed(const std::string& s) {
+    const auto b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return {};
+    return s.substr(b, s.find_last_not_of(" \t\r\n") - b + 1);
+}
+
+// Keeps only the one state file of a single-file workspace (and no other files of the directory).
+void restrictToFile(support::StateDirScan& scan, std::uint32_t index, std::uint32_t ext) {
+    std::vector<support::StateFileEntry> keep;
+    if (const support::EpochFileSet* set = scan.find(ext)) {
+        for (const support::StateFileEntry& f : set->contracts) {
+            if (f.index == index) keep.push_back(f);
+        }
+    }
+    scan.epochs.clear();
+    scan.others.clear();
+    scan.snapshots.clear();
+    if (!keep.empty()) {
+        support::EpochFileSet set;
+        set.epoch = ext;
+        set.contracts = std::move(keep);
+        scan.epochs.push_back(std::move(set));
+    }
+}
+
+} // namespace
+
 std::shared_ptr<Workspace> WorkspaceManager::buildAndInstall(const support::WorkspaceRequest& requestIn, const Attempt& attempt,
                                                             const std::atomic<bool>* callerCancel,
                                                             const std::shared_ptr<Workspace>& previous, bool reuseCore,
-                                                            bool lenientCore) {
+                                                            bool fromWatcher) {
     auto cancelled = [&]() {
         return (callerCancel != nullptr && callerCancel->load(std::memory_order_relaxed)) ||
                attempt.cancel->load(std::memory_order_relaxed);
     };
     support::WorkspaceRequest request = requestIn;
-    if (request.coreDir.empty()) throw rpc::Error(Code::InvalidParams, "params.coreDir must not be empty");
-    if (request.stateDir.empty()) throw rpc::Error(Code::InvalidParams, "params.stateDir must not be empty");
-    request.coreDir = support::normalizePath(request.coreDir);
-    request.stateDir = support::normalizePath(request.stateDir);
+    request.core.repoUrl = trimmed(request.core.repoUrl);
+    request.core.ref = trimmed(request.core.ref);
+    if (request.core.repoUrl.empty()) throw rpc::Error(Code::InvalidParams, "params.core.repoUrl must not be empty");
+    if (request.core.ref.empty()) throw rpc::Error(Code::InvalidParams, "params.core.ref must not be empty");
+    if (request.statePath.empty()) throw rpc::Error(Code::InvalidParams, "params.statePath must not be empty");
+    if (request.epoch && *request.epoch < 0) throw rpc::Error(Code::InvalidParams, "params.epoch must not be negative");
+    request.statePath = support::normalizePath(request.statePath);
 
-    support::StateDirScan scan = support::scanStateDir(request.stateDir);
-    if (!scan.readable) {
-        throw rpc::Error(Code::IoError, scan.error.empty() ? "cannot read state directory '" + request.stateDir + "'" : scan.error);
+    // What the state path names: a directory with state files, or one state file.
+    Workspace::Scope scope = Workspace::Scope::Dir;
+    std::string stateDir = request.statePath;
+    std::optional<std::uint32_t> fileIndex;
+    std::optional<std::uint32_t> fileExt;
+    if (!support::isDirectory(request.statePath)) {
+        const std::string name = request.statePath.substr(request.statePath.find_last_of("/\\") + 1);
+        const support::ParsedFileName parsed = support::parseStateFileName(name);
+        const bool exists = support::pathExists(request.statePath);
+        if (parsed.kind != support::FileNameKind::ContractState) {
+            if (!exists) throw rpc::Error(Code::IoError, "the state path '" + request.statePath + "' does not exist");
+            throw rpc::Error(Code::InvalidParams, "'" + request.statePath + "' is neither a directory nor a contract state file (contractNNNN.EEE)");
+        }
+        if (!exists && !fromWatcher) throw rpc::Error(Code::IoError, "the state file '" + request.statePath + "' does not exist");
+        scope = Workspace::Scope::File;
+        fileIndex = parsed.contractIndex;
+        fileExt = parsed.ext;
+        stateDir = support::parentPath(request.statePath).value_or(request.statePath);
+    }
+
+    support::StateDirScan scan = support::scanStateDir(stateDir);
+    if (!scan.readable && !(fromWatcher && scope == Workspace::Scope::File)) {
+        throw rpc::Error(Code::IoError, scan.error.empty() ? "cannot read state directory '" + stateDir + "'" : scan.error);
     }
     std::optional<std::uint32_t> ext;
     std::optional<int> epochForCore;
-    if (request.epoch) {
-        if (*request.epoch < 0) throw rpc::Error(Code::InvalidParams, "params.epoch must not be negative");
+    if (scope == Workspace::Scope::File) {
+        restrictToFile(scan, *fileIndex, *fileExt);
+        ext = *fileExt;
+        epochForCore = static_cast<int>(*fileExt);
+    } else if (request.epoch) {
         ext = static_cast<std::uint32_t>(*request.epoch) % 1000u;
         epochForCore = *request.epoch;
     } else if (auto newest = scan.newestEpoch()) {
@@ -155,52 +211,21 @@ std::shared_ptr<Workspace> WorkspaceManager::buildAndInstall(const support::Work
         epochForCore = static_cast<int>(*newest);
     }
 
+    CoreRequest coreRequest;
+    coreRequest.repoUrl = request.core.repoUrl;
+    coreRequest.ref = request.core.ref;
+    coreRequest.epoch = epochForCore;
+    coreRequest.defines = request.defines;
     std::shared_ptr<const CoreBundle> bundle;
-    if (reuseCore && previous) {
-        const auto& old = previous->core();
-        if (old && old->epochForCore == epochForCore && old->loaded.request.coreDir == request.coreDir &&
-            old->loaded.request.coreRef == request.coreRef.value_or("") && old->loaded.request.defines == request.defines) {
-            bundle = old;
-        }
-    }
+    if (reuseCore && previous && previous->core() && previous->core()->loaded.request == coreRequest) bundle = previous->core();
     if (!bundle) {
-        CoreRequest cr;
-        cr.coreDir = request.coreDir;
-        cr.coreRef = request.coreRef.value_or("");
-        cr.epoch = epochForCore;
-        cr.defines = request.defines;
-        cr.cacheDir = config_->cacheDir;
-        LoadedCore loaded;
-        if (lenientCore && previous) {
-            loaded = loadCoreLenient(cr, cancelled);
-            if (loaded.schema->contracts.empty()) {
-                // The headers are broken right now (half-saved edit): keep the last good schema, show the errors.
-                LoadedCore keep = previous->core()->loaded;
-                std::vector<Diagnostic> diags;
-                for (const Diagnostic& d : loaded.diagnostics) {
-                    if (d.severity == Diagnostic::Severity::Error) diags.push_back(d);
-                }
-                if (diags.empty()) {
-                    Diagnostic d;
-                    d.severity = Diagnostic::Severity::Error;
-                    d.message = "re-extraction of the core sources failed; showing the previous schema";
-                    diags.push_back(d);
-                }
-                for (const Diagnostic& d : keep.diagnostics) {
-                    if (d.severity != Diagnostic::Severity::Error) diags.push_back(d);
-                }
-                keep.diagnostics = std::move(diags);
-                // The files that were read last time stay watched (so fixing the file triggers the next attempt),
-                // plus the ones this attempt read.
-                for (const std::string& f : loaded.files) {
-                    if (std::find(keep.files.begin(), keep.files.end(), f) == keep.files.end()) keep.files.push_back(f);
-                }
-                loaded = std::move(keep);
-            }
-        } else {
-            loaded = loadCore(cr, cancelled);
-        }
-        bundle = makeCoreBundle(std::move(loaded));
+        CoreCall call;
+        call.cancelled = cancelled;
+        call.allowNetwork = !fromWatcher;
+        call.progress = [this](const std::string& phase, const std::string& message, std::optional<int> percent) {
+            emitProgress(phase, message, percent);
+        };
+        bundle = makeCoreBundle(core_->load(coreRequest, call));
     }
     if (cancelled()) throw rpc::Cancelled();
 
@@ -210,29 +235,28 @@ std::shared_ptr<Workspace> WorkspaceManager::buildAndInstall(const support::Work
     deps.cache = cache_;
     deps.identity = identity_;
     deps.watcher = config_->watcher;
-    auto ws = Workspace::create(nextId_.fetch_add(1), std::move(request), std::move(bundle), std::move(scan), ext, std::move(deps),
-                                generations);
-    ++created_;
+    auto ws = Workspace::create(nextId_.fetch_add(1), std::move(request), std::move(bundle), std::move(scan), scope, ext, fileIndex,
+                                std::move(deps), generations);
     install(ws, attempt);
-    if (config_->watchFiles) startWatching(ws);
+    startWatching(ws);
     return ws;
 }
 
 std::shared_ptr<Workspace> WorkspaceManager::open(const support::WorkspaceRequest& request, const std::atomic<bool>* callerCancel) {
     Attempt attempt = begin();
-    return buildAndInstall(request, attempt, callerCancel, current(), /*reuseCore=*/false, /*lenientCore=*/false);
+    return buildAndInstall(request, attempt, callerCancel, current(), /*reuseCore=*/false, /*fromWatcher=*/false);
 }
 
 std::shared_ptr<Workspace> WorkspaceManager::reload(const std::atomic<bool>* callerCancel) {
     std::shared_ptr<Workspace> prev = require();
     Attempt attempt = begin();
-    return buildAndInstall(prev->request(), attempt, callerCancel, prev, /*reuseCore=*/false, /*lenientCore=*/false);
+    return buildAndInstall(prev->request(), attempt, callerCancel, prev, /*reuseCore=*/false, /*fromWatcher=*/false);
 }
 
-void WorkspaceManager::rescan(const std::shared_ptr<Workspace>& cur, bool reextract) {
+void WorkspaceManager::rescan(const std::shared_ptr<Workspace>& cur) {
     Attempt attempt = begin();
     try {
-        auto ws = buildAndInstall(cur->request(), attempt, nullptr, cur, /*reuseCore=*/!reextract, /*lenientCore=*/true);
+        auto ws = buildAndInstall(cur->request(), attempt, nullptr, cur, /*reuseCore=*/true, /*fromWatcher=*/true);
         emitIfCurrent(ws->id(), "workspace.updated", ws->toJson());
     } catch (const rpc::Cancelled&) {
         // superseded by an open / close
@@ -241,7 +265,7 @@ void WorkspaceManager::rescan(const std::shared_ptr<Workspace>& cur, bool reextr
     }
 }
 
-void WorkspaceManager::processEvents(std::vector<QueuedEvent>& events, std::uint64_t sourceWorkspace) {
+void WorkspaceManager::processEvents(std::vector<QueuedEvent>& events) {
     std::shared_ptr<Workspace> cur = current();
     if (!cur) return;
     bool needRescan = false;
@@ -262,13 +286,8 @@ void WorkspaceManager::processEvents(std::vector<QueuedEvent>& events, std::uint
             needRescan = true;
         }
     }
-    const bool reextract = sourceWorkspace == cur->id();
-    if (reextract) {
-        rescan(cur, /*reextract=*/true);
-        return;
-    }
     if (needRescan) {
-        rescan(cur, /*reextract=*/false);
+        rescan(cur);
         return;
     }
     if (reconcile) {
@@ -277,7 +296,7 @@ void WorkspaceManager::processEvents(std::vector<QueuedEvent>& events, std::uint
     if (modified.empty()) return;
     Workspace::RefreshOutcome outcome = cur->refreshFiles(std::vector<std::uint32_t>(modified.begin(), modified.end()));
     if (outcome.missing) {
-        rescan(cur, /*reextract=*/false);
+        rescan(cur);
         return;
     }
     if (outcome.changed.empty()) return;
@@ -289,24 +308,15 @@ void WorkspaceManager::processEvents(std::vector<QueuedEvent>& events, std::uint
 void WorkspaceManager::workerMain() {
     std::unique_lock lock(queueMutex_);
     while (!stopping_) {
-        if (queue_.empty() && !sourceDue_) {
+        if (queue_.empty()) {
             queueCv_.wait(lock);
-            continue;
-        }
-        if (queue_.empty() && sourceDue_ && Clock::now() < *sourceDue_) {
-            queueCv_.wait_until(lock, *sourceDue_);
             continue;
         }
         std::vector<QueuedEvent> batch(std::make_move_iterator(queue_.begin()), std::make_move_iterator(queue_.end()));
         queue_.clear();
-        std::uint64_t sourceWorkspace = 0;
-        if (sourceDue_ && Clock::now() >= *sourceDue_) {
-            sourceWorkspace = sourceWorkspace_;
-            sourceDue_.reset();
-        }
         lock.unlock();
         try {
-            processEvents(batch, sourceWorkspace);
+            processEvents(batch);
         } catch (...) {
             // a failing refresh must never kill the worker
         }

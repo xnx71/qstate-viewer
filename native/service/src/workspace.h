@@ -1,4 +1,4 @@
-// Internal: one open workspace = core sources (schema) + state directory (files) + watchers.
+// Internal: one open workspace = core sources (schema) + state directory or single state file (files) + watcher.
 //
 // Thread-safety: a Workspace is shared between handler threads (via shared_ptr snapshots) and the manager's
 // worker thread. The per-contract mutable data (file info, reader, decoder, generation) is guarded by one mutex;
@@ -56,10 +56,15 @@ public:
         bool missing = false; // a watched file disappeared: the directory needs a rescan
     };
 
-    // `scan` is the scan of request.stateDir; `epochExt` the shown epoch (extension EEE of the files).
+    // What request.statePath names: a directory of state files, or one state file (only that contract is shown).
+    enum class Scope { Dir, File };
+
+    // `scan` is the scan of the state directory (for Scope::File it holds at most that one file); `epochExt` the
+    // shown epoch (extension EEE of the files); `fileIndex` the contract of a Scope::File workspace.
     static std::shared_ptr<Workspace> create(std::uint64_t id, support::WorkspaceRequest request,
-                                             std::shared_ptr<const CoreBundle> core, support::StateDirScan scan,
-                                             std::optional<std::uint32_t> epochExt, WorkspaceDeps deps,
+                                             std::shared_ptr<const CoreBundle> core, support::StateDirScan scan, Scope scope,
+                                             std::optional<std::uint32_t> epochExt, std::optional<std::uint32_t> fileIndex,
+                                             WorkspaceDeps deps,
                                              const std::map<std::uint32_t, std::uint64_t>& previousGenerations);
     ~Workspace();
 
@@ -67,6 +72,7 @@ public:
     const support::WorkspaceRequest& request() const { return request_; }
     const std::shared_ptr<const CoreBundle>& core() const { return core_; }
     const schema::Schema& schema() const { return core_->loaded.schema ? *core_->loaded.schema : emptySchema(); }
+    Scope scope() const { return scope_; }
     std::optional<std::uint32_t> epochExt() const { return epochExt_; }
     const support::StateDirScan& scan() const { return scan_; }
 
@@ -86,8 +92,8 @@ public:
     RefreshOutcome refreshFiles(const std::vector<std::uint32_t>& indices);
     std::vector<std::uint32_t> indicesWithFiles() const;
 
-    // Starts the directory watcher: contract files of the shown epoch ("state" tag) and, for working tree sources,
-    // the core source files ("src" tag). `sink` runs on the watcher thread and must be quick.
+    // Starts the watcher over the state files (the directory, or the one file). The core sources are an immutable
+    // export and are not watched. `sink` runs on the watcher thread and must be quick.
     using EventSink = std::function<void(std::uint64_t workspaceId, const support::WatchEvent&)>;
     void startWatching(EventSink sink);
     // Stops the watcher and waits for it. Idempotent; never call from a watcher callback.
@@ -116,7 +122,9 @@ private:
     support::WorkspaceRequest request_;
     std::shared_ptr<const CoreBundle> core_;
     support::StateDirScan scan_;
+    Scope scope_ = Scope::Dir;
     std::optional<std::uint32_t> epochExt_;
+    std::optional<std::uint32_t> fileIndex_;
     WorkspaceDeps deps_;
 
     mutable std::mutex mutex_; // entries_ contents (not the vector layout, which is fixed after create())

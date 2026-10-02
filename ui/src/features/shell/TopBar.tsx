@@ -5,6 +5,7 @@ import {
   CommandIcon,
   FolderOpenIcon,
   FlaskConicalIcon,
+  GitBranchIcon,
   HelpCircleIcon,
   MoonIcon,
   RefreshCwIcon,
@@ -18,7 +19,9 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getMockTransport } from "@/rpc/client";
-import { acknowledgeChanges, reloadWorkspace } from "@/store/actions";
+import { acknowledgeChanges, refreshAppInfo, reloadWorkspace } from "@/store/actions";
+import { coreLabel, repoShortName, shortSha } from "@/features/workspace/refs";
+import type { MockSim } from "@/rpc/mock";
 import { resolveTheme, themeAtom, toggleTheme } from "@/store/prefs";
 import { openSearch } from "@/store/search";
 import { store } from "@/store/store";
@@ -41,8 +44,14 @@ function MockMenu() {
   const mock = getMockTransport();
   const [live, setLive] = useState(mock?.backend.isLive() ?? false);
   useEffect(() => mock?.backend.onLiveChange(setLive), [mock]);
+  const [sim, setSim] = useState(mock?.backend.getSim() ?? { gitMissing: false, offline: false });
   const selected = useAtomValue(selectedContractInfoAtom);
   if (!mock) return null;
+  const simulate = (patch: Partial<MockSim>) => {
+    mock.backend.setSim(patch);
+    setSim(mock.backend.getSim());
+    refreshAppInfo();
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -65,6 +74,14 @@ function MockMenu() {
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => mock.backend.triggerChange()}>Change a random contract</DropdownMenuItem>
         <DropdownMenuItem onClick={() => mock.backend.triggerWorkspaceUpdated()}>Emit workspace.updated</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem checked={sim.gitMissing} onCheckedChange={(v) => simulate({ gitMissing: !!v })}>
+          <GitBranchIcon /> Simulate: git not installed
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem checked={sim.offline} onCheckedChange={(v) => simulate({ offline: !!v })}>
+          Simulate: no network
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuItem onClick={() => mock.backend.forgetMirrors()}>Forget local repository mirrors</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -90,16 +107,20 @@ export function TopBar() {
       <button
         type="button"
         onClick={() => store.set(openDialogAtom, true)}
-        className="ml-2 flex min-w-0 max-w-[26rem] items-center gap-2 rounded-md border bg-background/50 px-2 py-1 text-[0.85rem] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
-        aria-label="Workspace: open another"
-        title={ws ? `${ws.request.coreDir}\n${ws.request.stateDir}` : "Open workspace"}
+        className="ml-2 flex min-w-0 max-w-[40rem] items-center gap-2 rounded-md border bg-background/50 px-2 py-1 text-[0.85rem] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
+        aria-label="Workspace: change"
+        title={ws ? `${ws.core.repoUrl}\n${ws.core.kind} ${ws.core.ref} (${ws.core.sha})\n${ws.request.statePath}` : "Open workspace"}
       >
         <FolderOpenIcon className="size-3.5 shrink-0 text-muted-foreground" />
         {ws ? (
-          <span className="flex min-w-0 items-center gap-1.5 font-mono">
-            <span className="truncate">{ws.core.ref || "working tree"}</span>
-            {ws.core.version && <span className="text-muted-foreground">v{ws.core.version}</span>}
-            <span className="rounded bg-primary/15 px-1 text-primary">epoch {ws.state.epoch ?? "?"}</span>
+          <span className="flex min-w-0 items-center gap-1.5 font-mono" data-testid="workspace-chip">
+            <span className="truncate text-muted-foreground">{repoShortName(ws.core.repoUrl)}</span>
+            <span className="truncate font-medium">{coreLabel(ws.core)}</span>
+            {ws.request.core.ref === "auto" && <span className="rounded bg-muted px-1 text-[0.72rem] text-muted-foreground">auto</span>}
+            {ws.core.kind !== "commit" && <span className="text-muted-foreground">{shortSha(ws.core.sha)}</span>}
+            <span className="shrink-0 rounded bg-primary/15 px-1 text-primary">epoch {ws.state.epoch ?? "?"}</span>
+            {ws.state.scope === "file" && <span className="shrink-0 rounded bg-muted px-1 text-[0.72rem]">file</span>}
+            <span className="shrink-0 pl-1 font-sans text-primary">change</span>
           </span>
         ) : (
           <span className="text-muted-foreground">No workspace</span>

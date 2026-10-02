@@ -3,6 +3,7 @@
 
 #include "qstate/rpc/dispatcher.h"
 #include "qstate/rpc/event_bus.h"
+#include "qstate/service/core_loader.h"
 #include "qstate/service/service.h"
 #include "qstate/support/settings.h"
 
@@ -17,6 +18,7 @@ class WorkspaceManager;
 struct ServiceState {
     std::shared_ptr<const ServiceConfig> config;
     std::shared_ptr<support::SettingsStore> settings;
+    std::shared_ptr<CoreLoader> core;
     std::shared_ptr<WorkspaceManager> workspaces;
 };
 
@@ -33,14 +35,14 @@ struct ModuleContext {
     }
 };
 
-// `transport` overrides config.transport when not empty.
-nlohmann::json makeAppInfo(const ServiceConfig& config, const std::string& transport);
+nlohmann::json makeAppInfo(const ServiceConfig& config, bool gitAvailable);
 
 // One function per method group, each defined in its own .cpp file (src/<group>_methods.cpp).
 // Declare it here and append it to kModules in service.cpp.
 void registerAppMethods(ModuleContext& ctx);
 void registerSettingsMethods(ModuleContext& ctx);
-void registerFsMethods(ModuleContext& ctx);        // fs.list, core.versions
+void registerFsMethods(ModuleContext& ctx);        // fs.list
+void registerCoreMethods(ModuleContext& ctx);      // core.sync, core.commits
 void registerWorkspaceMethods(ModuleContext& ctx); // workspace.*
 void registerStateMethods(ModuleContext& ctx);     // schema.types, state.*, table.*
 

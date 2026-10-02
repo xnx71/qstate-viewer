@@ -1,11 +1,12 @@
 // Internal: owns the current Workspace (atomic swap), serialises open / reload / close, runs the worker thread
-// that turns watcher events into `contracts.changed` / `workspace.updated`.
+// that turns watcher events (state files) into `contracts.changed` / `workspace.updated`.
 //
 // Thread-safety: every member function may be called from any thread. Handlers use current() / require() to get
 // a shared_ptr snapshot and keep using it even if the workspace is replaced meanwhile.
 #pragma once
 
 #include "qstate/rpc/event_bus.h"
+#include "qstate/service/core_loader.h"
 #include "qstate/service/service.h"
 #include "workspace.h"
 
@@ -22,7 +23,7 @@ namespace qstate::service {
 
 class WorkspaceManager {
 public:
-    explicit WorkspaceManager(std::shared_ptr<const ServiceConfig> config);
+    WorkspaceManager(std::shared_ptr<const ServiceConfig> config, std::shared_ptr<CoreLoader> core);
     // Stops the worker thread and the watchers; emits nothing.
     ~WorkspaceManager();
     WorkspaceManager(const WorkspaceManager&) = delete;
@@ -44,9 +45,6 @@ public:
     std::shared_ptr<Workspace> reload(const std::atomic<bool>* callerCancel);
     void close();
 
-    // Number of Workspace objects built so far (open / reload / rescan / re-extraction); for tests and diagnostics.
-    std::size_t workspaceCount() const { return created_.load(); }
-
 private:
     struct Attempt {
         std::uint64_t ticket = 0;
@@ -59,23 +57,24 @@ private:
     };
 
     Attempt begin();
-    // Builds (loading the core unless `reuse` fits) and installs a workspace. `lenientCore`: a failed
-    // re-extraction keeps the previous schema and reports the errors as diagnostics (watcher path).
+    // Builds (loading the core unless `reuseCore` fits the previous workspace) and installs a workspace.
+    // `fromWatcher`: no network, and a state file that vanished is a workspace without that file, not an error.
     std::shared_ptr<Workspace> buildAndInstall(const support::WorkspaceRequest& request, const Attempt& attempt,
                                                const std::atomic<bool>* callerCancel,
                                                const std::shared_ptr<Workspace>& previous, bool reuseCore,
-                                               bool lenientCore);
+                                               bool fromWatcher);
+    void emitProgress(const std::string& phase, const std::string& message, std::optional<int> percent);
     void install(const std::shared_ptr<Workspace>& ws, const Attempt& attempt);
     void emitIfCurrent(std::uint64_t workspaceId, const char* name, const nlohmann::json& payload);
     void onWatchEvent(std::uint64_t workspaceId, const support::WatchEvent& event);
     void startWatching(const std::shared_ptr<Workspace>& ws);
 
     void workerMain();
-    // `sourceWorkspace`: id of the workspace whose core sources changed (debounce elapsed), 0 = none.
-    void processEvents(std::vector<QueuedEvent>& events, std::uint64_t sourceWorkspace);
-    void rescan(const std::shared_ptr<Workspace>& current, bool reextract);
+    void processEvents(std::vector<QueuedEvent>& events);
+    void rescan(const std::shared_ptr<Workspace>& current);
 
     std::shared_ptr<const ServiceConfig> config_;
+    std::shared_ptr<CoreLoader> core_;
     std::shared_ptr<decode::DecodeCache> cache_;
     std::shared_ptr<const decode::IdentityCodec> identity_;
 
@@ -85,13 +84,10 @@ private:
     std::shared_ptr<std::atomic<bool>> activeCancel_;
     std::vector<rpc::EventBus*> buses_;
     std::atomic<std::uint64_t> nextId_{1};
-    std::atomic<std::size_t> created_{0};
 
     std::mutex queueMutex_;
     std::condition_variable queueCv_;
     std::deque<QueuedEvent> queue_;
-    std::optional<std::chrono::steady_clock::time_point> sourceDue_;
-    std::uint64_t sourceWorkspace_ = 0;
     bool stopping_ = false;
     std::thread worker_;
 };

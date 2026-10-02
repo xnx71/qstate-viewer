@@ -42,14 +42,14 @@ export interface AppInfo {
   name: string;
   version: string;
   platform: "linux" | "windows" | "macos";
-  transport: "webview" | "http" | "mock";
+  transport: "webview" | "mock";
   homeDir: string;
   cwd: string;
   pathSeparator: "/" | "\\";
-  /** `git` executable usable: enables reading core sources from a tag instead of the working tree. */
+  /** `git` executable usable. Required: the core sources are fetched from a git repository (GitHub by default). */
   gitAvailable: boolean;
-  /** Values given on the command line (--core, --ref, --state, --epoch). */
-  startup: Partial<WorkspaceRequest>;
+  /** Default `WorkspaceRequest.core.repoUrl`. */
+  defaultRepoUrl: string;
 }
 
 export interface Settings {
@@ -71,12 +71,11 @@ export interface FsEntry {
   kind: "dir" | "file";
   size?: number;
   mtimeMs?: number;
+  /** Set for files named contractNNNN.EEE: a selectable contract state file. */
+  state?: { index: number; epoch: number };
 }
 
 export interface PathHints {
-  /** Directory contains src/contract_core/contract_def.h */
-  isCoreRepo: boolean;
-  isGitRepo: boolean;
   /** Epochs for which contractNNNN.EEE files exist directly in this directory (ascending). */
   stateEpochs: number[];
 }
@@ -91,21 +90,27 @@ export interface FsListing {
 }
 
 // ----------------------------------------------------------------------------
-// Workspace = (core sources that define the schema) + (directory with state files)
+// Workspace = (core sources from git that define the schema) + (state directory or single state file)
 // ----------------------------------------------------------------------------
 
-export interface WorkspaceRequest {
-  /** Qubic core repository root (the directory that contains src/contract_core/contract_def.h). */
-  coreDir: string;
+export interface CoreSource {
+  /** Git repository to read the Qubic core sources from. Default: AppInfo.defaultRepoUrl (GitHub qubic/core). Any URL or local path `git` understands. */
+  repoUrl: string;
   /**
-   * Optional git ref (tag / branch / sha) to read the sources from instead of the working tree.
-   * "auto": pick the newest tag whose `#define EPOCH` equals the epoch of the state files
-   * (falls back to the working tree, with a warning diagnostic, when no tag matches or git is unavailable).
-   * Omitted / "" : use the working tree as it is on disk.
+   * What to read: a tag, a branch (its current head), a commit sha (full or abbreviated), or "auto": the newest tag
+   * whose `#define EPOCH` equals the epoch of the state files (falls back to the default branch head, with a warning
+   * diagnostic, when no tag matches).
    */
-  coreRef?: string;
-  /** Directory with contractNNNN.EEE files. */
-  stateDir: string;
+  ref: string;
+}
+
+export interface WorkspaceRequest {
+  core: CoreSource;
+  /**
+   * Absolute path of a directory with contractNNNN.EEE files (all contracts of one epoch), or of ONE state file
+   * contractNNNN.EEE (then only that contract is shown).
+   */
+  statePath: string;
   /** Which epoch's files to show when the directory holds several. Default: the highest epoch present. */
   epoch?: number;
   /** Extra preprocessor defines, e.g. ["INCLUDE_CONTRACT_TEST_EXAMPLES"]. */
@@ -113,31 +118,37 @@ export interface WorkspaceRequest {
 }
 
 export interface CoreVersion {
-  /** "" for the working tree, otherwise a tag / branch name. */
+  /** Tag or branch name, or the sha for a commit. */
   ref: string;
-  kind: "worktree" | "tag" | "branch";
-  sha?: string;
-  /** "1.306.0" from VERSION_A/B/C in src/public_settings.h */
+  kind: "tag" | "branch" | "commit";
+  sha: string;
+  /** "1.306.0" from VERSION_A/B/C in src/public_settings.h (tags and commits; absent when unreadable). */
   version?: string;
   /** `#define EPOCH` in src/public_settings.h */
   epoch?: number;
   /** ISO date of the commit. */
   date?: string;
+  /** First line of the commit message (commits). */
+  subject?: string;
 }
 
-export interface CoreVersions {
-  worktree: CoreVersion;
-  /** Newest first. Empty when coreDir is not a git repository or git is unavailable. */
-  refs: CoreVersion[];
+/** State of the local mirror of a core repository. */
+export interface CoreRepo {
+  repoUrl: string;
+  /** Newest first. */
+  tags: CoreVersion[];
+  branches: CoreVersion[];
+  defaultBranch?: string;
+  /** ISO time of the last successful fetch. */
+  fetchedAt: string;
 }
 
 export interface CoreInfo {
-  dir: string;
-  /** Where the sources were actually read from (a cache directory when a git ref is used). */
-  sourceDir: string;
-  /** The ref that was used; "" = working tree. */
+  repoUrl: string;
+  /** The ref that was used (never "auto": the resolved tag / branch / sha). */
   ref: string;
-  sha?: string;
+  kind: "tag" | "branch" | "commit";
+  sha: string;
   version?: string;
   epoch?: number;
   /** Schema extraction wall time. */
@@ -153,7 +164,10 @@ export interface OtherFile {
 }
 
 export interface StateDirInfo {
+  /** Directory that holds the state files. */
   dir: string;
+  /** "file": the request named a single state file; only that contract is listed. */
+  scope: "dir" | "file";
   /** Epoch of the files shown (from the file extension). */
   epoch?: number;
   epochsAvailable: number[];
@@ -530,10 +544,19 @@ export interface RpcMethods {
   /** Directory browser. path "" = home directory. Hidden entries are excluded unless showHidden. */
   "fs.list": { params: { path: string; showHidden?: boolean }; result: FsListing };
 
-  /** Working tree + newest tags (default 30) with their versions / epochs. */
-  "core.versions": { params: { coreDir: string; limit?: number }; result: CoreVersions };
+  /**
+   * Makes sure the local mirror of the repository exists and is current (first call: clone, later: fetch), then lists
+   * tags and branches with version / epoch. Reports `core.progress` events. Fails with io_error when git is missing or
+   * the network / URL is bad and no mirror exists yet; with a stale mirror it succeeds and adds nothing new.
+   */
+  "core.sync": { params: { repoUrl: string; offline?: boolean }; result: CoreRepo };
+  /** Commits of a branch / tag / sha in the local mirror (call core.sync first), newest first. */
+  "core.commits": {
+    params: { repoUrl: string; ref: string; limit?: number; skip?: number; search?: string };
+    result: { total?: number; commits: CoreVersion[] };
+  };
 
-  /** Extract the schema, scan the state directory, start watching both. Replaces the current workspace. */
+  /** Resolve the core sources, extract the schema, scan the state path, start watching the state files. Replaces the current workspace. */
   "workspace.open": { params: WorkspaceRequest; result: Workspace };
   "workspace.get": { params: Record<string, never>; result: Workspace | null };
   /** Re-extract the schema and rescan the state directory with the current request. */
@@ -604,6 +627,8 @@ export type RpcResult<M extends RpcMethod> = RpcMethods[M]["result"];
 // ----------------------------------------------------------------------------
 
 export interface RpcEvents {
+  /** Progress of core.sync / workspace.open while sources are cloned, fetched or exported. */
+  "core.progress": { phase: "clone" | "fetch" | "export" | "parse"; message: string; percent?: number };
   /** The schema was re-extracted (core headers changed) or state files appeared / disappeared. */
   "workspace.updated": Workspace;
   /** The content of some state files changed on disk. Carries the updated ContractInfo (new generation). */
@@ -616,12 +641,8 @@ export type RpcEventName = keyof RpcEvents;
 // Transports
 // ----------------------------------------------------------------------------
 //
-// webview (production / native dev):
+// webview (the app):
 //   window.__qstate_invoke(method: string, params: object): Promise<result>   -- rejects with RpcError
 //   window.__qstate_emit(event: string, payload: unknown): void               -- defined by the UI, called by native
 //
-// http (browser dev, `qstate-cli serve`):
-//   POST /rpc     {"method": "...", "params": {...}}  ->  {"result": ...} | {"error": RpcError}
-//   GET  /events  Server-Sent Events:  event: <name>\n data: <json>\n\n
-//
-// mock (UI development without a backend): in-memory implementation of RpcMethods.
+// mock (UI development in a plain browser with `pnpm dev`): in-memory implementation of RpcMethods.

@@ -140,26 +140,32 @@ export function ContractSidebar() {
         <div className="space-y-2 border-t border-sidebar-border p-2 text-[0.85rem]">
           <div className="flex items-center justify-between gap-2">
             <span className="text-muted-foreground">Epoch</span>
-            <Select
-              value={String(ws.state.epoch ?? "")}
-              onValueChange={(v) => {
-                if (v) void openWorkspace({ ...ws.request, epoch: Number(v) });
-              }}
-            >
-              <SelectTrigger size="sm" className="h-6 w-24 font-mono" aria-label="Epoch">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ws.state.epochsAvailable
-                  .slice()
-                  .reverse()
-                  .map((e) => (
-                    <SelectItem key={e} value={String(e)}>
-                      {e}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            {ws.state.scope === "file" ? (
+              <span className="font-mono" title={ws.contracts[0]?.file?.path}>
+                {ws.state.epoch} · single file
+              </span>
+            ) : (
+              <Select
+                value={String(ws.state.epoch ?? "")}
+                onValueChange={(v) => {
+                  if (v) void openWorkspace({ ...ws.request, epoch: Number(v) });
+                }}
+              >
+                <SelectTrigger size="sm" className="h-6 w-24 font-mono" aria-label="Epoch">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ws.state.epochsAvailable
+                    .slice()
+                    .reverse()
+                    .map((e) => (
+                      <SelectItem key={e} value={String(e)}>
+                        {e}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
           <Button
             variant="ghost"

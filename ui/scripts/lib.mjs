@@ -60,3 +60,39 @@ export async function waitFor(page, fn, arg, timeout = 15000, what = "condition"
     throw new Error(`timeout waiting for ${what}`);
   }
 }
+
+const REPO_INPUT = 'input[aria-label="Repository URL"]';
+const PATH_INPUT = 'input[aria-label="State path"]';
+
+/** Wait for the open dialog's first sync (the tag list) to be done. */
+export async function waitSynced(page) {
+  await page.waitForSelector(REPO_INPUT, { timeout: 15000 });
+  await waitFor(page, () => !!document.querySelector("[data-testid=sync-summary]"), null, 20000, "repository sync");
+}
+
+/** Open the Tags tab and pick a tag by (a part of) its name. */
+export async function pickTag(page, name) {
+  await clickText(page, "Tags", "[role=tab]");
+  await page.waitForSelector('[role=listbox][aria-label="Tags"] [role=option]');
+  await typeInto(page, 'input[aria-label^="Search tags"]', name);
+  await clickText(page, name, '[role=listbox][aria-label="Tags"] [role=option]');
+}
+
+/** Type a path into the folder browser and wait until it is listed. */
+export async function gotoFolder(page, dir, expectText) {
+  await typeInto(page, PATH_INPUT, dir);
+  await page.keyboard.press("Enter");
+  await waitFor(page, (t) => [...document.querySelectorAll("[role=listbox][aria-label='Folder contents'] [role=option]")].some((o) => o.textContent.includes(t)), expectText, 10000, `folder listing with ${expectText}`);
+}
+
+/** Click "Use this folder" and (optionally) an epoch chip. */
+export async function chooseFolder(page, epoch) {
+  await clickText(page, "Use this folder", "button");
+  await page.waitForSelector("[data-testid=selection][data-scope=dir]");
+  if (epoch) await clickText(page, String(epoch), "[aria-label=Epoch] button");
+}
+
+export async function openWorkspace(page) {
+  await clickText(page, "Open workspace", "button");
+  await waitFor(page, () => !document.querySelector("[role=dialog]") && !!document.querySelector("[role=option][data-contract]"), null, 30000, "workspace opened (dialog closed)");
+}

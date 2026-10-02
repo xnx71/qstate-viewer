@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 
@@ -242,6 +243,29 @@ bool lessIgnoreCase(const std::string& a, const std::string& b) {
 }
 
 std::string homeDir() { return platform::homeDirectory(); }
+
+std::string defaultCacheDir() {
+    auto env = [](const char* name) -> std::string {
+        const char* v = std::getenv(name);
+        return v != nullptr ? std::string(v) : std::string();
+    };
+    std::string base;
+#if defined(_WIN32)
+    base = env("LOCALAPPDATA");
+#elif defined(__APPLE__)
+    if (const std::string home = homeDir(); !home.empty()) base = home + "/Library/Caches";
+#else
+    base = env("XDG_CACHE_HOME");
+    if (base.empty()) {
+        if (const std::string home = homeDir(); !home.empty()) base = home + "/.cache";
+    }
+#endif
+    if (base.empty()) {
+        std::error_code ec;
+        base = fs::temp_directory_path(ec).string();
+    }
+    return (fs::path(base) / "qstate-viewer").string();
+}
 std::string currentDir() { return platform::currentDirectory(); }
 std::string platformName() { return platform::platformName(); }
 
@@ -283,16 +307,6 @@ std::optional<std::string> parentPath(const std::string& normalized) {
     return parent.string();
 }
 
-PathHints pathHints(const std::string& dirArg) {
-    PathHints hints;
-    const std::string dir = normalizePath(dirArg);
-    const fs::path d(dir);
-    hints.isCoreRepo = platform::statPath((d / "src" / "contract_core" / "contract_def.h").string()).isRegular;
-    hints.isGitRepo = platform::statPath((d / ".git").string()).exists;
-    hints.stateEpochs = scanStateDir(dir).epochNumbers();
-    return hints;
-}
-
 FsListResult listDirectory(const std::string& pathArg, bool showHidden) {
     FsListResult result;
     FsListing& listing = result.listing;
@@ -319,15 +333,12 @@ FsListResult listDirectory(const std::string& pathArg, bool showHidden) {
         return result;
     }
 
-    bool hasGit = false;
     std::map<uint32_t, bool> epochs;
     for (const fs::directory_iterator end; it != end; it.increment(ec)) {
         if (ec) break;
         const std::string name = it->path().filename().string();
-        if (name == ".git") hasGit = true;
-        if (const auto parsed = parseStateFileName(name); parsed.kind == FileNameKind::ContractState) {
-            epochs[*parsed.ext] = true;
-        }
+        const auto parsed = parseStateFileName(name);
+        if (parsed.kind == FileNameKind::ContractState) epochs[*parsed.ext] = true;
         if (!showHidden && !name.empty() && name[0] == '.') continue;
         FsEntry e;
         e.name = name;
@@ -337,6 +348,7 @@ FsListResult listDirectory(const std::string& pathArg, bool showHidden) {
         if (es.exists && !es.isDir) {
             e.size = es.size;
             e.mtimeMs = toMs(es.mtimeNs);
+            if (parsed.kind == FileNameKind::ContractState) e.state = std::make_pair(parsed.contractIndex, *parsed.ext);
         } else if (es.exists) {
             e.mtimeMs = toMs(es.mtimeNs);
         }
@@ -346,9 +358,6 @@ FsListResult listDirectory(const std::string& pathArg, bool showHidden) {
         if (a.isDir != b.isDir) return a.isDir;
         return lessIgnoreCase(a.name, b.name);
     });
-    listing.hints.isGitRepo = hasGit;
-    listing.hints.isCoreRepo =
-        platform::statPath((fs::path(listing.path) / "src" / "contract_core" / "contract_def.h").string()).isRegular;
     for (const auto& [epoch, present] : epochs) {
         (void)present;
         listing.hints.stateEpochs.push_back(epoch);

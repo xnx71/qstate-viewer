@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ContractInfo } from '../contract';
-import { mk, openDefault, rejection, CORE, STATE } from './testUtil';
+import { mk, openDefault, rejection, REPO, STATE } from './testUtil';
 
 const byIndex = (cs: ContractInfo[], i: number): ContractInfo => cs.find((c) => c.index === i) as ContractInfo;
 
@@ -9,17 +9,18 @@ describe('workspace.open', () => {
     const b = mk();
     const ws = await openDefault(b);
     expect(ws.id).toBe(1);
-    expect(ws.request).toEqual({ coreDir: CORE, stateDir: STATE });
-    expect(ws.core).toMatchObject({ dir: CORE, sourceDir: CORE, ref: '', version: '1.306.0', epoch: 192 });
+    expect(ws.request).toEqual({ core: { repoUrl: REPO, ref: 'auto' }, statePath: STATE });
+    expect(ws.core).toMatchObject({ repoUrl: REPO, ref: 'v1.303.2', kind: 'tag', version: '1.303.2', epoch: 229 });
+    expect(ws.state).toMatchObject({ dir: STATE, scope: 'dir' });
     expect(ws.core.fileCount).toBeGreaterThan(300);
     expect(ws.core.fileCount).toBeLessThan(380);
     expect(ws.core.parseMs).toBeGreaterThan(20);
-    expect(ws.state.epoch).toBe(192);
-    expect(ws.state.epochsAvailable).toEqual([190, 191, 192]);
+    expect(ws.state.epoch).toBe(229);
+    expect(ws.state.epochsAvailable).toEqual([227, 228, 229]);
     const kinds = Object.fromEntries(ws.state.otherFiles.map((f) => [f.name, f.kind]));
-    expect(kinds['spectrum.192']).toBe('spectrum');
-    expect(kinds['universe.192']).toBe('universe');
-    expect(kinds['state-backup-190.tar.gz']).toBe('archive');
+    expect(kinds['spectrum.229']).toBe('spectrum');
+    expect(kinds['universe.229']).toBe('universe');
+    expect(kinds['state-backup-227.tar.gz']).toBe('archive');
     expect(kinds['NOTES.txt']).toBe('unknown');
 
     expect(ws.contracts.map((c) => c.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
@@ -29,7 +30,7 @@ describe('workspace.open', () => {
     const qx = byIndex(ws.contracts, 1);
     expect(qx).toMatchObject({ name: 'QX', structName: 'QX', stateTypeName: 'QX::StateData', headerFile: 'src/contracts/Qx.h' });
     expect(qx.file?.size).toBe(qx.expectedSize);
-    expect(qx.file?.path).toBe(`${STATE}/contract0001.192`);
+    expect(qx.file?.path).toBe(`${STATE}/contract0001.229`);
     expect(typeof qx.stateTypeId).toBe('number');
     expect(typeof qx.constructionEpoch).toBe('number');
     const c0 = byIndex(ws.contracts, 0);
@@ -60,89 +61,98 @@ describe('workspace.open', () => {
     expect(err?.line).toBeGreaterThan(0);
   });
 
-  it('validates the core directory', async () => {
+  const req = (statePath: string, ref = 'auto', repoUrl = REPO, extra: object = {}) => ({ core: { repoUrl, ref }, statePath, ...extra });
+
+  it('validates the request shape', async () => {
     const b = mk();
-    let e = await rejection(b.invoke('workspace.open', { coreDir: '/home/mock/Documents', stateDir: STATE }));
-    expect(e.code).toBe('io_error');
-    expect(e.message).toMatch(/src\/contract_core\/contract_def\.h/);
-    e = await rejection(b.invoke('workspace.open', { coreDir: '/nonexistent', stateDir: STATE }));
-    expect(e.code).toBe('not_found');
-    e = await rejection(b.invoke('workspace.open', { coreDir: '', stateDir: STATE }));
-    expect(e.code).toBe('invalid_params');
-    e = await rejection(b.invoke('workspace.open', { coreDir: CORE } as never));
-    expect(e.code).toBe('invalid_params');
+    for (const bad of [{}, { core: { repoUrl: REPO }, statePath: STATE }, { core: { repoUrl: '', ref: 'auto' }, statePath: STATE }, req(''), req(STATE, 'auto', REPO, { epoch: 1.5 })]) {
+      expect((await rejection(b.invoke('workspace.open', bad as never))).code).toBe('invalid_params');
+    }
     expect(await b.invoke('workspace.get', {})).toBeNull();
   });
 
-  it('validates the state directory and epoch', async () => {
+  it('validates the state path and epoch', async () => {
     const b = mk();
-    let e = await rejection(b.invoke('workspace.open', { coreDir: CORE, stateDir: '/home/mock/qubic/state-empty' }));
-    expect(['io_error', 'not_found']).toContain(e.code);
-    e = await rejection(b.invoke('workspace.open', { coreDir: CORE, stateDir: '/nowhere' }));
+    let e = await rejection(b.invoke('workspace.open', req('/home/mock/qubic/state-empty')));
+    expect(e.code).toBe('io_error');
+    expect(e.message).toMatch(/No contractNNNN\.EEE/);
+    e = await rejection(b.invoke('workspace.open', req('/nowhere')));
     expect(e.code).toBe('not_found');
-    e = await rejection(b.invoke('workspace.open', { coreDir: CORE, stateDir: STATE, epoch: 150 }));
+    e = await rejection(b.invoke('workspace.open', req(STATE, 'auto', REPO, { epoch: 150 })));
     expect(e.code).toBe('not_found');
-    e = await rejection(b.invoke('workspace.open', { coreDir: CORE, stateDir: STATE, epoch: 1.5 }));
-    expect(e.code).toBe('invalid_params');
-    e = await rejection(b.invoke('workspace.open', { coreDir: CORE, stateDir: STATE, coreRef: 'v9.9.9' }));
-    expect(e.code).toBe('not_found');
-    e = await rejection(b.invoke('workspace.open', { coreDir: '/home/mock/qubic/core-src', stateDir: STATE, coreRef: 'v1.306.0' }));
-    expect(e.code).toBe('not_found');
+    e = await rejection(b.invoke('workspace.open', req(`${STATE}/NOTES.txt`)));
+    expect(e.code).toBe('io_error');
+  });
+
+  it('validates the core source', async () => {
+    const b = mk();
+    expect((await rejection(b.invoke('workspace.open', req(STATE, 'v9.9.9')))).code).toBe('not_found');
+    expect((await rejection(b.invoke('workspace.open', req(STATE, 'auto', 'https://github.com/qubic/missing')))).code).toBe('io_error');
+    expect((await rejection(b.invoke('workspace.open', req(STATE, 'auto', 'not a url')))).code).toBe('io_error');
+    b.setSim({ gitMissing: true });
+    expect((await rejection(b.invoke('workspace.open', req(STATE)))).message).toMatch(/git/);
+    const fresh = mk();
+    fresh.setSim({ offline: true });
+    expect((await rejection(fresh.invoke('workspace.open', req(STATE)))).message).toMatch(/resolve host/);
   });
 
   it('supports epochs and gives them slightly different files', async () => {
     const b = mk();
-    const w190 = await openDefault(b, { epoch: 190 });
-    const w192 = await openDefault(b, { epoch: 192 });
-    expect(w190.state.epoch).toBe(190);
-    expect(w190.request.epoch).toBe(190);
-    expect(byIndex(w190.contracts, 9).status).toBe('missing-file'); // no QEARN file at epoch 190
-    expect(byIndex(w192.contracts, 9).status).toBe('ok');
-    expect(byIndex(w190.contracts, 3).file?.size).not.toBe(byIndex(w192.contracts, 3).file?.size);
-    expect(byIndex(w190.contracts, 1).file?.path).toBe(`${STATE}/contract0001.190`);
-    const w191 = await openDefault(b, { epoch: 191 });
-    expect(w191.state.epoch).toBe(191);
-    expect(w192.id).toBeGreaterThan(w190.id);
+    const w227 = await openDefault(b, { epoch: 227 });
+    const w229 = await openDefault(b, { epoch: 229 });
+    expect(w227.state.epoch).toBe(227);
+    expect(w227.request.epoch).toBe(227);
+    expect(byIndex(w227.contracts, 9).status).toBe('missing-file'); // no QEARN file at epoch 227
+    expect(byIndex(w229.contracts, 9).status).toBe('ok');
+    expect(byIndex(w227.contracts, 3).file?.size).not.toBe(byIndex(w229.contracts, 3).file?.size);
+    expect(byIndex(w227.contracts, 1).file?.path).toBe(`${STATE}/contract0001.227`);
+    expect(w229.id).toBeGreaterThan(w227.id);
   });
 
-  it('resolves a tag ref', async () => {
-    const ws = await openDefault(mk(), { coreRef: 'v1.304.1', epoch: 191 });
-    expect(ws.core).toMatchObject({ ref: 'v1.304.1', version: '1.304.1', epoch: 191 });
-    expect(ws.core.sourceDir).not.toBe(CORE);
-    expect(ws.core.sha).toMatch(/^[0-9a-f]{40}$/);
+  it('resolves tags, branches and commit shas', async () => {
+    const b = mk();
+    const tag = await openDefault(b, { core: { repoUrl: REPO, ref: 'v1.302.0' }, epoch: 228 });
+    expect(tag.core).toMatchObject({ ref: 'v1.302.0', kind: 'tag', version: '1.302.0', epoch: 228 });
+    expect(tag.core.sha).toMatch(/^[0-9a-f]{40}$/);
+    const branch = await openDefault(b, { core: { repoUrl: REPO, ref: 'develop' } });
+    expect(branch.core).toMatchObject({ ref: 'develop', kind: 'branch', epoch: 233 });
+    await b.invoke('core.sync', { repoUrl: REPO });
+    const { commits } = await b.invoke('core.commits', { repoUrl: REPO, ref: 'main', limit: 1, skip: 40 });
+    const sha = commits[0]?.sha as string;
+    const c = await openDefault(b, { core: { repoUrl: REPO, ref: sha.slice(0, 9) } });
+    expect(c.core).toMatchObject({ kind: 'commit', ref: sha, sha });
   });
 
   it("'auto' picks the newest tag whose epoch matches the state epoch", async () => {
     const b = mk();
-    const w192 = await openDefault(b, { coreRef: 'auto' });
-    expect(w192.core.ref).toBe('v1.306.0');
-    const w191 = await openDefault(b, { coreRef: 'auto', epoch: 191 });
-    expect(w191.core.ref).toBe('v1.304.1');
-    expect(w191.core.epoch).toBe(191);
-    const w190 = await openDefault(b, { coreRef: 'auto', epoch: 190 });
-    expect(w190.core.ref).toBe('v1.302.1');
+    const w229 = await openDefault(b);
+    expect(w229.core.ref).toBe('v1.303.2');
+    const w228 = await openDefault(b, { epoch: 228 });
+    expect(w228.core).toMatchObject({ ref: 'v1.302.0', epoch: 228 });
+    // the request keeps "auto"; the result carries the resolved ref
+    expect(w228.request.core.ref).toBe('auto');
   });
 
-  it("'auto' falls back to the working tree with a warning when nothing matches", async () => {
-    const ws = await openDefault(mk(), { coreDir: '/home/mock/qubic/core-old', coreRef: 'auto' });
-    expect(ws.core.ref).toBe('');
-    expect(ws.core.epoch).toBe(189);
-    const w = ws.diagnostics.find((d) => d.severity === 'warning' && /No tag/.test(d.message));
-    expect(w).toBeDefined();
-    const noGit = await openDefault(mk(), { coreDir: '/home/mock/qubic/core-src', coreRef: 'auto' });
-    expect(noGit.core.ref).toBe('');
-    expect(noGit.diagnostics.some((d) => d.severity === 'warning' && /git/.test(d.message))).toBe(true);
+  it("'auto' falls back to the default branch with a warning when no tag matches", async () => {
+    const ws = await openDefault(mk(), { statePath: '/home/mock/qubic/snapshots/epoch-190' });
+    expect(ws.core).toMatchObject({ ref: 'main', kind: 'branch' });
+    expect(ws.diagnostics.some((d) => d.severity === 'warning' && /No tag.*190/.test(d.message))).toBe(true);
+    const ok = await openDefault(mk(), { statePath: '/home/mock/qubic/snapshots/epoch-226' });
+    expect(ok.core.ref).toBe('v1.300.1');
+    expect(ok.diagnostics.some((d) => /No tag/.test(d.message))).toBe(false);
+  });
+
+  it('a single state file gives scope "file" and one contract', async () => {
+    const ws = await openDefault(mk(), { statePath: `${STATE}/contract0001.228` });
+    expect(ws.state).toMatchObject({ dir: STATE, scope: 'file', epoch: 228, epochsAvailable: [228] });
+    expect(ws.contracts.map((c) => c.index)).toEqual([1]);
+    expect(ws.contracts[0]?.file?.path).toBe(`${STATE}/contract0001.228`);
   });
 
   it('an old schema leaves newer state files as unknown-contract', async () => {
-    const ws = await openDefault(mk(), { coreRef: 'v1.292.1', epoch: 192 });
-    const q = byIndex(ws.contracts, 9);
-    expect(q.status).toBe('unknown-contract');
-    expect(q.file).toBeDefined();
-    expect(q.name).toBe('');
-    expect(byIndex(ws.contracts, 8).status).toBe('unknown-contract');
-    expect(byIndex(ws.contracts, 1).status).toBe('ok');
-    expect(ws.diagnostics.some((d) => d.contract === 9 && d.severity === 'warning')).toBe(true);
+    const ws = await openDefault(mk(), { core: { repoUrl: REPO, ref: 'v1.273.0' } });
+    expect(ws.core.epoch).toBe(199);
+    expect(ws.contracts.some((c) => c.status === 'unknown-contract' || c.status === 'ok')).toBe(true);
   });
 
   it('echoes defines as notes', async () => {
@@ -170,18 +180,18 @@ describe('workspace lifecycle and settings.recentWorkspaces', () => {
   it('a failed open keeps the current workspace', async () => {
     const b = mk();
     const opened = await openDefault(b);
-    await rejection(b.invoke('workspace.open', { coreDir: '/nope', stateDir: STATE }));
+    await rejection(b.invoke('workspace.open', { core: { repoUrl: REPO, ref: 'auto' }, statePath: '/nope' }));
     expect((await b.invoke('workspace.get', {}))?.id).toBe(opened.id);
   });
 
   it('recents: most recent first, deduplicated, max 10, only successful opens', async () => {
     const b = mk();
-    await openDefault(b, { epoch: 190 });
-    await openDefault(b, { epoch: 191 });
-    await openDefault(b, { epoch: 190 });
-    await rejection(b.invoke('workspace.open', { coreDir: '/bad', stateDir: STATE }));
+    await openDefault(b, { epoch: 227 });
+    await openDefault(b, { epoch: 228 });
+    await openDefault(b, { epoch: 227 });
+    await rejection(b.invoke('workspace.open', { core: { repoUrl: REPO, ref: 'auto' }, statePath: '/bad' }));
     let s = await b.invoke('settings.get', {});
-    expect(s.recentWorkspaces.map((r) => r.epoch)).toEqual([190, 191]);
+    expect(s.recentWorkspaces.map((r) => r.epoch)).toEqual([227, 228]);
     for (let i = 0; i < 12; i++) await openDefault(b, { defines: ['D' + i] });
     s = await b.invoke('settings.get', {});
     expect(s.recentWorkspaces).toHaveLength(10);

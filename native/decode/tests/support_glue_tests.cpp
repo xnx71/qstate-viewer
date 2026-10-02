@@ -5,8 +5,6 @@
 
 #include "real_helpers.h"
 
-#if defined(QSTATE_DECODE_HAS_SUPPORT) && QSTATE_DECODE_HAS_SUPPORT
-
 using namespace qstate::decode;
 using namespace qstate::decode::testing;
 
@@ -61,5 +59,3 @@ TEST_CASE("FileReaderByteSource matches the pread source on a real file") {
     CHECK(fr.read(fr.size() + 5, 10, a.data()) == 0);
     CHECK(fr.isAllZero(8000, 100) == ref.isAllZero(8000, 100));
 }
-
-#endif

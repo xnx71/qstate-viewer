@@ -5,6 +5,16 @@
 //   window.__qstate_emit(name, payload)                 (defined by the UI; called here with batched events)
 //
 // All logic lives in qstate_service / qstate_rpc / qstate_gui; this file only wires them to the webview.
+//
+// The executable takes no command line arguments. Test hooks (environment variables; not for users, documented in
+// docs/HOST.md "Testing"):
+//   QSTATE_SELFTEST=1              load the built-in bridge test page instead of the UI; exit status 0 / 1 = verdict
+//   QSTATE_SELFTEST_HOLD_MS=<ms>   with QSTATE_SELFTEST: keep the window open this long after the verdict (screenshots)
+//   QSTATE_SELFTEST_SCRIPT=<file>  inject this JavaScript file into the UI page before the page's own scripts; it can
+//                                  call window.__qstate_log(text) and window.__qstate_exit(code) (real-webview e2e)
+//   QSTATE_CONFIG_DIR=<dir>        settings.json lives here instead of the user's configuration directory
+//   QSTATE_CACHE_DIR=<dir>         git mirrors and exported core sources live here instead of the user's cache directory
+//   QSTATE_DEBUG=1                 enable the web inspector of the webview
 // Threading: the webview must be used from the main thread only, except webview::dispatch / terminate / resolve
 // which are thread-safe. Worker threads therefore only call w.resolve() and w.dispatch().
 // Shutdown order matters (see the end of main): everything that may call into the webview is stopped first.
@@ -12,9 +22,7 @@
 #include "qstate/gui/assets.h"
 #include "qstate/gui/bridge.h"
 #include "qstate/gui/event_pump.h"
-#include "qstate/gui/options.h"
 #include "qstate/gui/selftest.h"
-#include "qstate/httpd/server.h"
 #include "qstate/rpc/dispatcher.h"
 #include "qstate/rpc/framing.h"
 #include "qstate/service/service.h"
@@ -28,6 +36,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -89,9 +98,21 @@ sigset_t blockTerminationSignals() {
 }
 #endif
 
-std::string loopbackUrl(int port) {
-    return "http://127.0.0.1:" + std::to_string(port) + "/";
+std::string envString(const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::string(value) : std::string();
 }
+
+bool envFlag(const char* name) {
+    const std::string value = envString(name);
+    return !value.empty() && value != "0";
+}
+
+constexpr const char* kTitle = "Qubic State Viewer";
+constexpr int kWidth = 1360;
+constexpr int kHeight = 860;
+constexpr unsigned kWorkers = 4;
+constexpr int kSelftestTimeoutSec = 60;
 
 } // namespace
 
@@ -99,72 +120,41 @@ int main(int argc, char** argv) {
 #if !defined(_WIN32)
     const sigset_t termSignals = blockTerminationSignals();
 #endif
-    std::vector<std::string> args(argv + 1, argv + argc);
-    gui::ParseResult parsed = gui::parseArgs(args);
-    if (!parsed.error.empty()) {
-        std::cerr << "qstate-viewer: " << parsed.error << "\n\n" << gui::usage();
+    if (argc > 1) {
+        std::cerr << "qstate-viewer " << QSTATE_VERSION_STRING << ": this program takes no arguments\n";
         return 2;
     }
-    const gui::Options& opt = parsed.options;
-    if (opt.help) {
-        std::cout << gui::usage();
-        return 0;
-    }
-    if (opt.version) {
-        std::cout << "qstate-viewer " << QSTATE_VERSION_STRING << " (webview " << WEBVIEW_VERSION_NUMBER << ")\n";
-        return 0;
-    }
+    const bool selftestMode = envFlag("QSTATE_SELFTEST");
+    const std::string scriptFile = envString("QSTATE_SELFTEST_SCRIPT");
+    const std::string holdText = envString("QSTATE_SELFTEST_HOLD_MS");
+    const int selftestHoldMs = holdText.empty() ? 0 : std::max(0, std::atoi(holdText.c_str()));
 
     // ---- backend -----------------------------------------------------------------------------------------
-    rpc::Dispatcher dispatcher(opt.workers);
+    rpc::Dispatcher dispatcher(kWorkers);
     rpc::EventBus events;
     service::ServiceConfig serviceConfig;
-    serviceConfig.transport = "webview";
-    serviceConfig.startup = opt.startup;
+    if (const std::string dir = envString("QSTATE_CONFIG_DIR"); !dir.empty()) serviceConfig.settingsPath = dir + "/settings.json";
+    serviceConfig.cacheDir = envString("QSTATE_CACHE_DIR");
     service::Service service(serviceConfig);
     service.registerAll(dispatcher, events);
 
     std::unique_ptr<gui::SelftestSession> selftest;
-    if (opt.selftest) {
-        selftest = std::make_unique<gui::SelftestSession>(dispatcher, events, opt.selftestBench);
-    }
-
-    // ---- optional HTTP transport / static UI server ------------------------------------------------------------
-    std::unique_ptr<httpd::Server> server;
-    std::string uiUrl;
-    if (opt.servePort || !opt.uiDir.empty()) {
-        httpd::Options so;
-        so.port = opt.servePort.value_or(0);
-        so.token = opt.token;
-        so.staticDir = opt.uiDir;
-        so.enableRpc = opt.servePort.has_value(); // --ui-dir alone serves files only
-        server = std::make_unique<httpd::Server>(dispatcher, events, so);
-        try {
-            const int port = server->start();
-            if (opt.servePort) {
-                std::cerr << "qstate-viewer: HTTP transport on " << loopbackUrl(port) << "  (POST /rpc, GET /events)\n";
-            }
-            if (!opt.uiDir.empty()) {
-                uiUrl = loopbackUrl(port);
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "qstate-viewer: cannot start the HTTP server: " << e.what() << "\n";
-            return 1;
-        }
+    if (selftestMode) {
+        selftest = std::make_unique<gui::SelftestSession>(dispatcher, events);
     }
 
     // ---- window ------------------------------------------------------------------------------------------------
     std::unique_ptr<webview::webview> window;
     try {
-        window = std::make_unique<webview::webview>(opt.debug, nullptr);
+        window = std::make_unique<webview::webview>(envFlag("QSTATE_DEBUG"), nullptr);
     } catch (const std::exception& e) {
         std::cerr << "qstate-viewer: cannot create the webview window: " << e.what()
                   << "\n  (is a display available? under CI use xvfb-run; see docs/HOST.md)\n";
         return 3;
     }
     webview::webview& w = *window;
-    w.set_title(opt.title);
-    w.set_size(opt.width, opt.height, WEBVIEW_HINT_NONE);
+    w.set_title(kTitle);
+    w.set_size(kWidth, kHeight, WEBVIEW_HINT_NONE);
 
     // window.__qstate_invoke(method, params) -> Promise. The request is parsed on the UI thread (small); the
     // handler runs on a pool thread, which resolves the promise (w.resolve is thread-safe).
@@ -183,17 +173,16 @@ int main(int argc, char** argv) {
                 [&w, id](nlohmann::json response) {
                     gui::BridgeReply reply = gui::makeReply(response);
                     w.resolve(id, reply.status, reply.json);
-                },
-                "webview");
+                });
         },
         nullptr);
 
-    // --selftest-script: a script injected into the page that drives the real UI (development / CI hook).
+    // QSTATE_SELFTEST_SCRIPT: a script injected into the page that drives the real UI (CI hook).
     std::atomic<int> scriptExitCode{0};
-    if (!opt.scriptFile.empty()) {
-        std::ifstream in(opt.scriptFile, std::ios::binary);
+    if (!scriptFile.empty()) {
+        std::ifstream in(scriptFile, std::ios::binary);
         if (!in) {
-            std::cerr << "qstate-viewer: cannot read " << opt.scriptFile << "\n";
+            std::cerr << "qstate-viewer: cannot read " << scriptFile << "\n";
             return 2;
         }
         std::stringstream text;
@@ -225,16 +214,12 @@ int main(int argc, char** argv) {
         w.dispatch([&w, script = std::move(script)] { w.eval(script); });
     });
 
-    if (opt.selftest) {
+    if (selftest) {
         w.set_html(std::string(gui::selftestPageHtml()));
-    } else if (!opt.devUrl.empty()) {
-        w.navigate(opt.devUrl);
-    } else if (!uiUrl.empty()) {
-        w.navigate(uiUrl);
     } else {
         if (gui::embeddedIndexIsPlaceholder()) {
             std::cerr << "qstate-viewer: note: this build embeds the placeholder page (ui/dist/index.html did not exist at "
-                         "build time). Use --dev-url / --ui-dir or rebuild after `pnpm build`.\n";
+                         "build time). Run `pnpm build` in ui/ and rebuild.\n";
         }
         w.set_html(std::string(gui::embeddedIndexHtml()));
     }
@@ -262,12 +247,12 @@ int main(int argc, char** argv) {
     std::thread selftestThread;
     if (selftest) {
         selftestThread = std::thread([&] {
-            const bool reported = selftest->waitForReport(opt.selftestTimeoutSec);
+            const bool reported = selftest->waitForReport(kSelftestTimeoutSec);
             if (!reported) {
                 selftestTimedOut = true;
-                std::cerr << "qstate-viewer: selftest TIMEOUT after " << opt.selftestTimeoutSec << " s\n";
-            } else if (opt.selftestHoldMs > 0) {
-                stopHelpers.waitFor(std::chrono::milliseconds(opt.selftestHoldMs));
+                std::cerr << "qstate-viewer: selftest TIMEOUT after " << kSelftestTimeoutSec << " s\n";
+            } else if (selftestHoldMs > 0) {
+                stopHelpers.waitFor(std::chrono::milliseconds(selftestHoldMs));
             }
             terminate();
             if (!reported) {
@@ -292,9 +277,6 @@ int main(int argc, char** argv) {
         selftestThread.join();
     }
     pump.reset();                // no more dispatch() of events
-    if (server) {
-        server->stop();          // HTTP threads call into the dispatcher
-    }
     dispatcher.shutdown();       // cancels and joins the workers: no resolve() after this point
     window.reset();              // now the webview can go
 

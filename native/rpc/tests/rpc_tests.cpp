@@ -242,32 +242,6 @@ TEST_CASE("destroying an idle or never used dispatcher is fine") {
     }
 }
 
-TEST_CASE("framing") {
-    Dispatcher d;
-    d.registerMethod("sum", [](const json& p, CallContext&) { return p.at("a").get<int>() + p.at("b").get<int>(); });
-    d.registerMethod("noparams", [](const json& p, CallContext&) { return p.is_object() && p.empty(); });
-
-    CHECK(json::parse(handleRequest(d, R"({"method":"sum","params":{"a":2,"b":3}})")) == json{{"result", 5}});
-    CHECK(json::parse(handleRequest(d, R"({"method":"noparams"})"))["result"] == true);
-    CHECK(json::parse(handleRequest(d, R"({"method":"noparams","params":null})"))["result"] == true);
-    CHECK(json::parse(handleRequest(d, "not json"))["error"]["code"] == "invalid_params");
-    CHECK(json::parse(handleRequest(d, "[1]"))["error"]["code"] == "invalid_params");
-    CHECK(json::parse(handleRequest(d, R"({"params":{}})"))["error"]["code"] == "invalid_params");
-    CHECK(json::parse(handleRequest(d, R"({"method":7})"))["error"]["code"] == "invalid_params");
-    CHECK(json::parse(handleRequest(d, R"({"method":""})"))["error"]["code"] == "invalid_params");
-    CHECK(json::parse(handleRequest(d, R"({"method":"x"})"))["error"]["code"] == "unknown_method");
-    CHECK(json::parse(handleRequest(d, R"({"method":"sum","params":{}})"))["error"]["code"] == "internal");
-    CHECK(isError(makeError(Code::NotFound, "n")));
-    CHECK_FALSE(isError(makeResult(1)));
-}
-
-TEST_CASE("serialize survives invalid UTF-8") {
-    std::string bad = "ab\xff\xfe" "cd";
-    std::string text = serialize(makeResult(json(bad)));
-    json parsed = json::parse(text);
-    CHECK(parsed["result"].get<std::string>().find("ab") == 0);
-}
-
 TEST_CASE("event bus fans out to all sinks in order") {
     EventBus bus;
     std::vector<std::string> a, b;
@@ -360,16 +334,6 @@ TEST_CASE("unsubscribe waits for a running sink") {
     CHECK(finished.load()); // unsubscribe returned only after the sink completed
     emitter.join();
     releaser.join();
-}
-
-TEST_CASE("the transport reaches the handler") {
-    Dispatcher d(1);
-    d.registerMethod("t", [](const json&, CallContext& ctx) { return ctx.transport() + "/" + ctx.method(); });
-    CHECK(d.dispatch("t", nullptr)["result"] == "/t");
-    CHECK(d.dispatch("t", nullptr, "http")["result"] == "http/t");
-    std::promise<json> p;
-    d.dispatchAsync("t", nullptr, [&](json r) { p.set_value(std::move(r)); }, "webview");
-    CHECK(p.get_future().get()["result"] == "webview/t");
 }
 
 TEST_CASE("param helpers") {

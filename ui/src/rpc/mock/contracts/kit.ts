@@ -1,7 +1,7 @@
 // Shared helpers for the synthetic contract definitions.
 
-import type { GenSpec, LeafGen, GenCtx } from '../gens';
-import { G, IdPool, write64 } from '../gens';
+import type { GenSpec, GenCtx } from '../gens';
+import { IdPool, write64 } from '../gens';
 import { mix, strHash, u01 } from '../prng';
 import type { Types, TNode } from '../types';
 import { contractIdBytes } from '../ids';
@@ -59,14 +59,6 @@ export const ASSET_NAMES: readonly string[] = [
   'DOGE', 'TRX', 'ADA', 'LINK', 'AVAX', 'DOT',
   ...Array.from({ length: 31 }, (_, i) => 'TKN' + String(i + 1).padStart(2, '0')),
 ];
-
-export const CONTRACT_NAMES: readonly string[] = [
-  '', 'QX', 'QUOTTERY', 'RANDOM', 'QUTIL', 'MLM', 'GQMPROP', 'SWATCH', 'CCF', 'QEARN',
-];
-
-export function contractIdGen(...indices: number[]): LeafGen {
-  return G.contractId(indices);
-}
 
 export { contractIdBytes, write64 };
 

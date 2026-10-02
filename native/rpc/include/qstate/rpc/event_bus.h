@@ -1,4 +1,4 @@
-// Fan-out of native -> UI events to the sinks registered by the transports.
+// Fan-out of native -> UI events to the registered sinks (the webview host).
 #pragma once
 
 #include <nlohmann/json.hpp>

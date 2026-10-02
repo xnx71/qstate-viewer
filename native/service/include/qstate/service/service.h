@@ -1,10 +1,11 @@
 // The RPC methods of ui/src/rpc/contract.ts, implemented on top of the other modules (schema, decode, support).
-// Method groups: app, settings, fs (fs.list, core.versions), workspace, state (schema.types, state.*, table.*).
-// See docs/SERVICE.md and native/service/README.md.
+// Method groups: app, settings, fs (fs.list), core (core.sync, core.commits), workspace, state (schema.types,
+// state.*, table.*). See docs/SERVICE.md and native/service/README.md.
 #pragma once
 
 #include "qstate/rpc/dispatcher.h"
 #include "qstate/rpc/event_bus.h"
+#include "qstate/support/git.h"
 #include "qstate/support/watcher.h"
 
 #include <chrono>
@@ -17,37 +18,26 @@
 
 namespace qstate::service {
 
-// Subset of WorkspaceRequest that can be given on the command line (AppInfo.startup).
-struct StartupRequest {
-    std::optional<std::string> coreDir;
-    std::optional<std::string> coreRef;
-    std::optional<std::string> stateDir;
-    std::optional<std::int64_t> epoch;
-};
+// Repository the core sources come from unless the user chooses another one (AppInfo.defaultRepoUrl).
+inline constexpr const char* kDefaultRepoUrl = "https://github.com/qubic/core";
 
-struct ServiceState; // settings store, workspace manager, decode cache (internal)
+struct ServiceState; // settings store, workspace manager, core loader (internal)
 
 struct ServiceConfig {
     std::string appName = "qstate-viewer";
     // "" = the version of the CMake project.
     std::string version;
-    // AppInfo.transport: "webview" | "http" | "mock" (supplied by the host).
-    std::string transport = "http";
-    StartupRequest startup;
     // Size of the decode cache shared by all contracts of the open workspace.
     std::size_t decodeCacheBytes = std::size_t(256) << 20;
     // Settings file ("" = <config dir>/qstate-viewer/settings.json).
     std::string settingsPath;
-    // Where git exports of core tags are kept ("" = <cache dir>/qstate-viewer/core).
+    // Application cache directory ("" = support::defaultCacheDir()): git mirrors in <cacheDir>/repos, exported core
+    // sources in <cacheDir>/core.
     std::string cacheDir;
-    // Polling / settle times of the file watcher (state files and core sources).
+    // The git executable and its short-command timeout.
+    support::GitOptions git;
+    // Polling / settle times of the file watcher (state files).
     support::WatcherOptions watcher;
-    // false: the workspace is not watched (one-shot tools like qstate-cli): no watcher threads, no events.
-    bool watchFiles = true;
-    // false: workspace.open does not touch the settings file (recentWorkspaces).
-    bool recordRecentWorkspaces = true;
-    // Quiet time after the last change of a watched core source file before the schema is re-extracted.
-    std::chrono::milliseconds sourceDebounce{500};
 };
 
 // Thread safety: registerAll() must be called before the dispatcher is used. The registered handlers do not

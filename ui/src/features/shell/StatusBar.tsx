@@ -41,7 +41,7 @@ export function StatusBar() {
         </span>
       )}
       {pending.lastAt > 0 && <span className="shrink-0 text-warn">last change {fmtAgo(pending.lastAt, now)}</span>}
-      {ws && <span className="shrink-0">{ws.contracts.length} contracts</span>}
+      {ws && <span className="shrink-0">{ws.contracts.length === 1 ? "1 contract" : `${ws.contracts.length} contracts`}</span>}
       <span className="shrink-0 rounded bg-muted px-1.5 text-[0.72rem]" title="RPC transport">
         {info?.transport ?? "…"}
       </span>

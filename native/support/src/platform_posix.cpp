@@ -185,6 +185,10 @@ ProcessResult runProcess(const ProcessSpec& spec) {
         return result;
     }
 
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attr, 0);  // own process group: the whole tree can be stopped
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
@@ -213,8 +217,9 @@ ProcessResult runProcess(const ProcessSpec& spec) {
     argv.push_back(nullptr);
 
     pid_t pid = -1;
-    const int rc = ::posix_spawnp(&pid, argv[0], &actions, nullptr, argv.data(), envp.data());
+    const int rc = ::posix_spawnp(&pid, argv[0], &actions, &attr, argv.data(), envp.data());
     posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
     ::close(outPipe[1]);
     ::close(errPipe[1]);
     if (rc != 0) {
@@ -233,14 +238,18 @@ ProcessResult runProcess(const ProcessSpec& spec) {
     std::vector<char> buf(256 * 1024);
 
     while (open[0] || open[1]) {
-        int timeout = -1;
+        if (spec.cancel && spec.cancel()) {
+            result.cancelled = true;
+            break;
+        }
+        int timeout = spec.cancel ? 100 : -1;
         if (spec.timeoutMs > 0) {
             const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
             if (left <= 0) {
                 result.timedOut = true;
                 break;
             }
-            timeout = static_cast<int>(std::min<long long>(left, 1000000));
+            timeout = static_cast<int>(std::min<long long>(left, spec.cancel ? 100 : 1000000));
         }
         pollfd pfds[2];
         int n = 0;
@@ -276,20 +285,40 @@ ProcessResult runProcess(const ProcessSpec& spec) {
                     result.aborted = true;
                     stop = true;
                 }
-            } else if (result.stderrText.size() < spec.maxStderrBytes) {
-                result.stderrText.append(buf.data(), std::min<size_t>(static_cast<size_t>(got),
-                                                                      spec.maxStderrBytes - result.stderrText.size()));
+            } else {
+                if (spec.onStderr) spec.onStderr(buf.data(), static_cast<size_t>(got));
+                result.stderrText.append(buf.data(), static_cast<size_t>(got));
+                if (result.stderrText.size() > spec.maxStderrBytes) {
+                    result.stderrText.erase(0, result.stderrText.size() - spec.maxStderrBytes);
+                }
             }
         }
         if (stop) break;
     }
-    if (result.timedOut || result.aborted || !result.error.empty()) {
-        ::kill(pid, SIGKILL);
-        killed = true;
-    }
     ::close(outPipe[0]);
     ::close(errPipe[0]);
     int status = 0;
+    if (result.timedOut || result.aborted || result.cancelled || !result.error.empty()) {
+        // Polite first (git removes its lock files and temporary packs on SIGTERM), then the hammer.
+        killed = true;
+        ::kill(-pid, SIGTERM);
+        bool reaped = false;
+        for (int i = 0; i < 200 && !reaped; i++) {
+            const pid_t w = ::waitpid(pid, &status, WNOHANG);
+            if (w == pid || (w < 0 && errno != EINTR)) {
+                reaped = true;
+            } else {
+                ::usleep(10 * 1000);
+            }
+        }
+        if (!reaped) {
+            ::kill(-pid, SIGKILL);
+            while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+            }
+        }
+        ::kill(-pid, SIGKILL);  // anything the leader left behind
+        return result;
+    }
     while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
     }
     if (!killed) {

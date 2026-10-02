@@ -1,10 +1,10 @@
 // workspace.open: validation, core ref resolution, per-contract status, diagnostics.
 
-import type { ContractInfo, ContractStatus, CoreInfo, Diagnostic, OtherFile, StateDirInfo, Workspace, WorkspaceRequest } from '../contract';
+import type { ContractInfo, ContractStatus, CoreInfo, CoreVersion, Diagnostic, OtherFile, StateDirInfo, Workspace, WorkspaceRequest } from '../contract';
 import type { World } from './contracts';
 import type { MockFs } from './fsTree';
-import { normalizePath } from './fsTree';
-import { CORE_REPOS, coreVersions, shaOf, tagInfo } from './coreVersions';
+import { normalizePath, parentOf } from './fsTree';
+import type { FakeRepo } from './coreRepo';
 import { STATE_FILE_RE, stateFileMtime, stateFileName, stateFileSize } from './statePlan';
 import { fmtInt, isPlainObject, rpcError } from './util';
 import { mix, strHash } from './prng';
@@ -17,18 +17,17 @@ export interface OpenResult {
 
 export function validateRequest(p: unknown): WorkspaceRequest {
   if (!isPlainObject(p)) throw rpcError('invalid_params', 'workspace.open expects an object');
-  const { coreDir, stateDir, coreRef, epoch, defines } = p;
-  if (typeof coreDir !== 'string' || coreDir.trim() === '') throw rpcError('invalid_params', "'coreDir' must be a non-empty string");
-  if (typeof stateDir !== 'string' || stateDir.trim() === '') throw rpcError('invalid_params', "'stateDir' must be a non-empty string");
-  if (coreRef !== undefined && typeof coreRef !== 'string') throw rpcError('invalid_params', "'coreRef' must be a string");
+  const { core, statePath, epoch, defines } = p;
+  if (!isPlainObject(core) || typeof core.repoUrl !== 'string' || core.repoUrl.trim() === '') throw rpcError('invalid_params', "'core.repoUrl' must be a non-empty string");
+  if (typeof core.ref !== 'string' || core.ref.trim() === '') throw rpcError('invalid_params', "'core.ref' must be a non-empty string");
+  if (typeof statePath !== 'string' || statePath.trim() === '') throw rpcError('invalid_params', "'statePath' must be a non-empty string");
   if (epoch !== undefined && (typeof epoch !== 'number' || !Number.isInteger(epoch) || epoch < 0)) {
     throw rpcError('invalid_params', "'epoch' must be a non-negative integer");
   }
   if (defines !== undefined && (!Array.isArray(defines) || defines.some((d) => typeof d !== 'string'))) {
     throw rpcError('invalid_params', "'defines' must be an array of strings");
   }
-  const req: WorkspaceRequest = { coreDir, stateDir };
-  if (coreRef !== undefined) req.coreRef = coreRef;
+  const req: WorkspaceRequest = { core: { repoUrl: core.repoUrl, ref: core.ref }, statePath };
   if (epoch !== undefined) req.epoch = epoch;
   if (defines !== undefined) req.defines = [...(defines as string[])];
   return req;
@@ -46,79 +45,71 @@ export function openWorkspace(
   world: World,
   fs: MockFs,
   seed: number,
+  repo: FakeRepo,
   rawReq: unknown,
   id: number,
   generations: ReadonlyMap<number, number>,
 ): OpenResult {
   const req = validateRequest(rawReq);
-  const coreDir = normalizePath(req.coreDir);
-  const stateDir = normalizePath(req.stateDir);
+  const statePath = normalizePath(req.statePath);
 
-  // ---- core directory
-  const coreNode = fs.stat(coreDir);
-  if (!coreNode) throw rpcError('not_found', `Core directory not found: ${coreDir}`);
-  if (coreNode.kind !== 'dir') throw rpcError('invalid_params', `Not a directory: ${coreDir}`);
-  if (!fs.hints(coreDir).isCoreRepo) {
-    throw rpcError('io_error', `Cannot read src/contract_core/contract_def.h in '${coreDir}': no such file (is this a Qubic core checkout?)`, {
-      path: coreDir + '/src/contract_core/contract_def.h',
-    });
-  }
-
-  // ---- state directory
-  const stateNode = fs.stat(stateDir);
-  if (!stateNode) throw rpcError('not_found', `State directory not found: ${stateDir}`);
-  if (stateNode.kind !== 'dir') throw rpcError('invalid_params', `Not a directory: ${stateDir}`);
-  const epochsAvailable = fs.hints(stateDir).stateEpochs;
-  if (epochsAvailable.length === 0) {
-    throw rpcError('io_error', `No contractNNNN.EEE state files found in '${stateDir}'`, { path: stateDir });
-  }
-  const epoch = req.epoch ?? (epochsAvailable[epochsAvailable.length - 1] as number);
-  if (!epochsAvailable.includes(epoch)) {
-    throw rpcError('not_found', `No state files for epoch ${epoch} in '${stateDir}' (available: ${epochsAvailable.join(', ')})`);
+  // ---- state path: a directory of contractNNNN.EEE files or one such file
+  const node = fs.stat(statePath);
+  if (!node) throw rpcError('not_found', `No such file or directory: ${statePath}`);
+  let stateDir = statePath;
+  let scope: StateDirInfo['scope'] = 'dir';
+  let only: number | undefined;
+  let epochsAvailable: number[];
+  let epoch: number;
+  if (node.kind === 'file') {
+    const m = STATE_FILE_RE.exec(node.name);
+    if (!m) throw rpcError('io_error', `'${node.name}' is not a contract state file (expected contractNNNN.EEE)`, { path: statePath });
+    stateDir = parentOf(statePath) ?? '/';
+    scope = 'file';
+    only = Number(m[1]);
+    epoch = Number(m[2]);
+    epochsAvailable = [epoch];
+  } else {
+    epochsAvailable = fs.hints(stateDir).stateEpochs;
+    if (epochsAvailable.length === 0) throw rpcError('io_error', `No contractNNNN.EEE state files found in '${stateDir}'`, { path: stateDir });
+    epoch = req.epoch ?? (epochsAvailable[epochsAvailable.length - 1] as number);
+    if (!epochsAvailable.includes(epoch)) {
+      throw rpcError('not_found', `No state files for epoch ${epoch} in '${stateDir}' (available: ${epochsAvailable.join(', ')})`);
+    }
   }
 
   // ---- core ref
-  const repo = CORE_REPOS[coreDir];
-  if (!repo) throw rpcError('internal', 'mock: core repository table out of sync with the file system');
   const diagnostics: Diagnostic[] = [];
-  const versions = coreVersions(seed, coreDir, 1000);
-  const wanted = req.coreRef ?? '';
-  let ref = '';
-  let tag = undefined as ReturnType<typeof tagInfo>;
+  const wanted = req.core.ref;
+  let version: CoreVersion | undefined;
   if (wanted === 'auto') {
-    if (!repo.git) {
-      diagnostics.push({ severity: 'warning', message: 'git is not available for this checkout; using the working tree instead of a tag' });
-    } else {
-      tag = versions.refs.find((r) => r.epoch === epoch);
-      if (tag) ref = tag.ref;
-      else
-        diagnostics.push({
-          severity: 'warning',
-          message: `No tag whose '#define EPOCH' is ${epoch} was found; using the working tree (version ${repo.version}, epoch ${repo.epoch})`,
-          file: 'src/public_settings.h',
-        });
+    version = repo.tagForEpoch(epoch);
+    if (!version) {
+      version = repo.resolve(repo.repo.defaultBranch ?? 'main');
+      diagnostics.push({
+        severity: 'warning',
+        message: `No tag whose '#define EPOCH' is ${epoch} was found; using the head of ${version?.ref} (version ${version?.version}, epoch ${version?.epoch})`,
+        file: 'src/public_settings.h',
+      });
     }
-  } else if (wanted !== '') {
-    tag = repo.git ? tagInfo(seed, coreDir, wanted) : undefined;
-    if (!tag) {
-      throw rpcError('not_found', repo.git ? `Unknown git ref '${wanted}' in ${coreDir}` : `Cannot resolve '${wanted}': ${coreDir} is not a git repository`);
-    }
-    ref = tag.ref;
+  } else {
+    version = repo.resolve(wanted);
+    if (!version) throw rpcError('not_found', `Unknown revision '${wanted}' in ${req.core.repoUrl}`);
   }
-  const schemaEpoch = tag?.epoch ?? repo.epoch;
-  const version = tag?.version ?? repo.version;
-  const sha = tag ? tag.sha : repo.git ? versions.worktree.sha : undefined;
-  const h = mix(seed ^ strHash(coreDir + '|' + ref), 7);
+  if (!version) throw rpcError('internal', 'mock: default branch missing');
+  const schemaEpoch = version.epoch ?? epoch;
+  const coreVersion = version.version ?? '?';
+  const h = mix(seed ^ strHash(req.core.repoUrl + '|' + version.sha), 7);
   const core: CoreInfo = {
-    dir: coreDir,
-    sourceDir: tag ? `/home/mock/.cache/qstate/core-${(sha ?? shaOf(seed, ref)).slice(0, 7)}` : coreDir,
-    ref,
-    version,
+    repoUrl: req.core.repoUrl,
+    ref: version.ref,
+    kind: version.kind,
+    sha: version.sha,
+    version: version.version,
     epoch: schemaEpoch,
-    parseMs: (tag ? 150 : 70) + (h % 180),
+    parseMs: (version.kind === 'tag' ? 150 : 70) + (h % 180),
     fileCount: 328 + (h % 23),
   };
-  if (sha) core.sha = sha;
 
   // ---- state directory scan
   const otherFiles: OtherFile[] = [];
@@ -127,16 +118,17 @@ export function openWorkspace(
     otherFiles.push({ name: n.name, size: n.size, kind: classifyOther(n.name) });
   }
   otherFiles.sort((a, b) => (a.name < b.name ? -1 : 1));
-  const state: StateDirInfo = { dir: stateDir, epoch, epochsAvailable: [...epochsAvailable], otherFiles };
+  const state: StateDirInfo = { dir: stateDir, scope, epoch, epochsAvailable: [...epochsAvailable], otherFiles };
 
   // ---- contracts
   const contracts: ContractInfo[] = [];
   const indices = new Set<number>();
-  for (const d of world.contracts) indices.add(d.index);
+  for (const d of world.contracts) if (only === undefined || d.index === only) indices.add(d.index);
   for (const n of fs.names(stateDir)) {
     const m = STATE_FILE_RE.exec(n.name);
-    if (m && Number(m[2]) === epoch) indices.add(Number(m[1]));
+    if (m && Number(m[2]) === epoch && (only === undefined || Number(m[1]) === only)) indices.add(Number(m[1]));
   }
+  if (only !== undefined) indices.delete(-1);
   for (const index of [...indices].sort((a, b) => a - b)) {
     const def = world.byIndex(index);
     const known = !!def && (index === 0 || schemaEpoch >= def.constructionEpoch);
@@ -151,12 +143,12 @@ export function openWorkspace(
         name: '',
         file,
         status: 'unknown-contract',
-        statusMessage: `Core ${version} (epoch ${schemaEpoch}) has no contract with index ${index}; the state files are from a newer core`,
+        statusMessage: `Core ${coreVersion} (epoch ${schemaEpoch}) has no contract with index ${index}; the state files are from a newer core`,
         generation,
       });
       diagnostics.push({
         severity: 'warning',
-        message: `State file ${fname} has no matching contract in core ${version}`,
+        message: `State file ${fname} has no matching contract in core ${coreVersion}`,
         contract: index,
       });
       continue;
@@ -245,8 +237,7 @@ export function openWorkspace(
     return o;
   });
 
-  const request: WorkspaceRequest = { coreDir, stateDir };
-  if (req.coreRef !== undefined) request.coreRef = req.coreRef;
+  const request: WorkspaceRequest = { core: req.core, statePath: req.statePath };
   if (req.epoch !== undefined) request.epoch = req.epoch;
   if (req.defines !== undefined) request.defines = req.defines;
   return { workspace: { id, request, core, state, contracts, diagnostics: diagnosticsOut }, epoch, schemaEpoch };

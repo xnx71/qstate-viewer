@@ -7,11 +7,3 @@ target_include_directories(nlohmann_json SYSTEM INTERFACE "${CMAKE_CURRENT_SOURC
 add_library(doctest INTERFACE)
 add_library(doctest::doctest ALIAS doctest)
 target_include_directories(doctest SYSTEM INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-
-add_library(httplib INTERFACE)
-add_library(httplib::httplib ALIAS httplib)
-target_include_directories(httplib SYSTEM INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(httplib INTERFACE Threads::Threads)
-if(WIN32)
-    target_link_libraries(httplib INTERFACE ws2_32 crypt32)
-endif()

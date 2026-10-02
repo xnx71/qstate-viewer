@@ -9,13 +9,11 @@
     "typecheck": "tsc -b",
     "lint": "oxlint src scripts",
     "test": "vitest run",
-    "smoke": "node scripts/smoke.mjs",
-    "e2e:real": "node scripts/e2e-real.mjs"
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@tanstack/react-table": "^9.2.4",
-    "@tanstack/react-virtual": "^3.14.13",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

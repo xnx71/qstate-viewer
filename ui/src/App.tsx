@@ -54,7 +54,7 @@ export function App() {
             </ErrorBoundary>
           ) : (
             <EmptyState icon={<FolderOpenIcon />} title="No workspace open">
-              <p>Open a Qubic core repository together with a directory of contract state files.</p>
+              <p>Choose a Qubic core source (a git repository) together with a folder of contract state files, or a single state file.</p>
               <Button className="mt-3" onClick={() => store.set(openDialogAtom, true)}>
                 <FolderOpenIcon /> Open workspace
               </Button>

@@ -49,18 +49,8 @@ private:
 };
 
 inline std::shared_ptr<const IdentityCodec> realCodec() {
-#if defined(QSTATE_DECODE_HAS_SUPPORT) && QSTATE_DECODE_HAS_SUPPORT
     return std::make_shared<SupportIdentityCodec>();
-#else
-    return std::make_shared<BasicIdentityCodec>();
-#endif
 }
-constexpr bool kRealIdentities =
-#if defined(QSTATE_DECODE_HAS_SUPPORT) && QSTATE_DECODE_HAS_SUPPORT
-    true;
-#else
-    false;
-#endif
 
 struct RealContract {
     LoadedContract lc;

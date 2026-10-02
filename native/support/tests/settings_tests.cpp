@@ -15,8 +15,9 @@ namespace {
 
 WorkspaceRequest req(int i) {
     WorkspaceRequest r;
-    r.coreDir = "/core" + std::to_string(i);
-    r.stateDir = "/state" + std::to_string(i);
+    r.core.repoUrl = "https://example.org/core" + std::to_string(i);
+    r.core.ref = "auto";
+    r.statePath = "/state" + std::to_string(i);
     return r;
 }
 
@@ -32,7 +33,7 @@ TEST_CASE("settings: JSON shapes of contract.ts") {
     s.theme = "dark";
     s.ui = json{{"sidebar", 240}, {"nested", json{{"a", true}}}};
     WorkspaceRequest r = req(1);
-    r.coreRef = "auto";
+    r.core.ref = "v1.303.2";
     r.epoch = 229;
     r.defines = {"INCLUDE_CONTRACT_TEST_EXAMPLES"};
     s.recentWorkspaces.push_back(r);
@@ -41,9 +42,11 @@ TEST_CASE("settings: JSON shapes of contract.ts") {
     const json j = s;
     CHECK(j["theme"] == "dark");
     CHECK(j["recentWorkspaces"].size() == 2);
-    CHECK(j["recentWorkspaces"][0]["coreRef"] == "auto");
+    CHECK(j["recentWorkspaces"][0]["core"] == json{{"repoUrl", "https://example.org/core1"}, {"ref", "v1.303.2"}});
+    CHECK(j["recentWorkspaces"][0]["statePath"] == "/state1");
     CHECK(j["recentWorkspaces"][0]["epoch"] == 229);
     CHECK(j["recentWorkspaces"][0]["defines"][0] == "INCLUDE_CONTRACT_TEST_EXAMPLES");
+    CHECK_FALSE(j["recentWorkspaces"][0].contains("coreDir"));
     CHECK_FALSE(j["recentWorkspaces"][1].contains("coreRef"));
     CHECK_FALSE(j["recentWorkspaces"][1].contains("epoch"));
     CHECK_FALSE(j["recentWorkspaces"][1].contains("defines"));
@@ -54,10 +57,13 @@ TEST_CASE("settings: JSON shapes of contract.ts") {
 }
 
 TEST_CASE("settings: tolerant from_json") {
-    Settings s = json::parse(R"({"theme":"blue","recentWorkspaces":[1,{"coreDir":"a"},{"coreDir":"c","stateDir":"s","epoch":"x"},
-        {"coreDir":"c","stateDir":"s/"}],"ui":[1,2]})").get<Settings>();
+    const char* old = R"({"coreDir":"/core","coreRef":"auto","stateDir":"/state"})";  // shape of an earlier version
+    Settings s = json::parse(std::string(R"({"theme":"blue","recentWorkspaces":[1,)") + old +
+                             R"(,{"core":{"repoUrl":"a"},"statePath":"s"},
+        {"core":{"repoUrl":"c","ref":"auto"},"statePath":"s","epoch":"x"},
+        {"core":{"repoUrl":"c","ref":"auto"},"statePath":"s/"}],"ui":[1,2]})").get<Settings>();
     CHECK(s.theme == "system");
-    REQUIRE(s.recentWorkspaces.size() == 1);  // invalid ones dropped, duplicates (trailing slash) collapsed
+    REQUIRE(s.recentWorkspaces.size() == 1);  // old-shaped and incomplete ones dropped, duplicates (trailing slash) collapsed
     CHECK_FALSE(s.recentWorkspaces[0].epoch.has_value());
     CHECK(s.ui.is_object());
     CHECK(s.ui.empty());
@@ -71,6 +77,23 @@ TEST_CASE("settings: tolerant from_json") {
     CHECK(many.get<Settings>().recentWorkspaces.size() == kMaxRecentWorkspaces);
 }
 
+TEST_CASE("settings: a file written by an earlier version loads without its old recent workspaces") {
+    testutil::TempDir dir;
+    const auto file = dir.path() / "settings.json";
+    {
+        std::ofstream out(file);
+        out << R"({"version":1,"theme":"light","recentWorkspaces":[{"coreDir":"/core","stateDir":"/state","coreRef":"auto"}],
+                   "ui":{"sidebar":200}})";
+    }
+    SettingsStore store(file.string());
+    const Settings s = store.get();
+    CHECK(store.lastError().empty());
+    CHECK(s.theme == "light");
+    CHECK(s.recentWorkspaces.empty());
+    CHECK(s.ui["sidebar"] == 200);
+    CHECK(store.addRecentWorkspace(req(1)).recentWorkspaces.size() == 1);  // and it keeps working
+}
+
 TEST_CASE("settings: recent workspace list maintenance") {
     std::vector<WorkspaceRequest> list;
     for (int i = 0; i < 12; i++) addRecentWorkspace(list, req(i));
@@ -82,12 +105,17 @@ TEST_CASE("settings: recent workspace list maintenance") {
     addRecentWorkspace(list, again);
     CHECK(list.size() == 10);
     CHECK(list[0].epoch == std::optional<int>(230));  // moved to the front, newest request wins
-    CHECK(std::count_if(list.begin(), list.end(), [](const auto& r) { return r.coreDir == "/core5"; }) == 1);
+    CHECK(std::count_if(list.begin(), list.end(), [](const auto& r) { return r.statePath == "/state5"; }) == 1);
     WorkspaceRequest slash = req(7);
-    slash.stateDir += "/";
+    slash.statePath += "/";
     addRecentWorkspace(list, slash);
     CHECK(list.size() == 10);
-    CHECK(list[0].stateDir == "/state7/");
+    CHECK(list[0].statePath == "/state7/");
+    WorkspaceRequest otherRef = req(7);
+    otherRef.core.ref = "v1.0.0";  // same state, another core version: a separate entry
+    addRecentWorkspace(list, otherRef);
+    CHECK(list.size() == 10);
+    CHECK(list[1].statePath == "/state7/");
 }
 
 TEST_CASE("settings: store round trip at an injected path, creating directories") {

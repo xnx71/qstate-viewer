@@ -10,7 +10,7 @@ std::string_view embeddedIndexHtml();
 // True when ui/dist/index.html did not exist at build time and the small placeholder page is embedded.
 bool embeddedIndexIsPlaceholder();
 
-// The built-in page of --headless-selftest.
+// The built-in page of the bridge self test.
 std::string_view selftestPageHtml();
 
 } // namespace qstate::gui

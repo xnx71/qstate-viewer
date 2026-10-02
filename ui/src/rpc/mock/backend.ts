@@ -2,7 +2,8 @@
 
 import type {
   AppInfo,
-  CoreVersions,
+  CoreRepo,
+  CoreVersion,
   ContractInfo,
   FsListing,
   NodeInfo,
@@ -25,9 +26,10 @@ import type {
 } from '../contract';
 import { buildWorld } from './contracts';
 import type { World } from './contracts';
-import { CWD, HOME, MockFs, normalizePath } from './fsTree';
-import { coreVersions } from './coreVersions';
-import { openWorkspace } from './workspace';
+import { CWD, HOME, MockFs } from './fsTree';
+import { buildFakeRepo, DEFAULT_REPO_URL } from './coreRepo';
+import type { FakeRepo } from './coreRepo';
+import { openWorkspace, validateRequest } from './workspace';
 import type { StateSource } from './tree';
 import { locate, nodeInfo, pageChildren, readRaw, resolveNode, reveal } from './tree';
 import { buildTableSource, describeTable, KeyCache, runTable, TableCache } from './tables';
@@ -41,7 +43,19 @@ export interface MockOptions {
   latencyMs?: [number, number];
   live?: boolean;
   liveIntervalMs?: number;
-  startup?: Partial<WorkspaceRequest>;
+  /** Scales the simulated clone / fetch / export durations (default 1, 0 = instant). */
+  timeScale?: number;
+  /** Repositories whose local mirror already exists (default: none, the first core.sync clones). */
+  mirrors?: string[];
+  settings?: Partial<Settings>;
+}
+
+/** Failure simulations, toggled from the UI's mock menu. */
+export interface MockSim {
+  /** `git` is not installed. */
+  gitMissing: boolean;
+  /** No network: clones and fetches fail, existing mirrors keep working. */
+  offline: boolean;
 }
 
 export interface MockBackend {
@@ -52,10 +66,14 @@ export interface MockBackend {
   onLiveChange(cb: (on: boolean) => void): () => void;
   triggerChange(contractIndex?: number): void;
   triggerWorkspaceUpdated(): void;
+  getSim(): MockSim;
+  setSim(patch: Partial<MockSim>): void;
+  /** Drops all local repository mirrors: the next core.sync clones again. */
+  forgetMirrors(): void;
   dispose(): void;
 }
 
-type Handler = (params: unknown) => unknown;
+type Handler = (params: unknown) => unknown | Promise<unknown>;
 type EventHandler = <E extends RpcEventName>(event: E, payload: RpcEvents[E]) => void;
 
 interface WsState {
@@ -89,7 +107,7 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
   const seed = options.seed ?? 1;
   const latency = options.latencyMs ?? [8, 60];
   const liveInterval = options.liveIntervalMs ?? 3500;
-  const startup = options.startup ?? {};
+  const timeScale = options.timeScale ?? 1;
 
   const world: World = buildWorld(seed);
   const fs = new MockFs(world, seed);
@@ -100,7 +118,10 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
   const handlers = new Set<EventHandler>();
   const liveCbs = new Set<(on: boolean) => void>();
 
-  let settings: Settings = { theme: 'system', recentWorkspaces: [], ui: {} };
+  let settings: Settings = { theme: 'system', recentWorkspaces: [], ui: {}, ...clone(options.settings ?? {}) };
+  const sim: MockSim = { gitMissing: false, offline: false };
+  const mirrors = new Map<string, string>((options.mirrors ?? []).map((u) => [u, new Date().toISOString()]));
+  const repos = new Map<string, FakeRepo>();
   let state: WsState | null = null;
   let nextWorkspaceId = 1;
   let live = false;
@@ -110,6 +131,54 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
   const sources = new Map<number, { key: string; src: StateSource }>();
 
   const env = { contractName: (i: number): string | undefined => world.byIndex(i)?.name || undefined };
+
+  // ---- core repositories ------------------------------------------------------------------------------
+
+  const pause = (ms: number): Promise<void> => (ms * timeScale > 0 ? new Promise((r) => setTimeout(r, ms * timeScale)) : Promise.resolve());
+
+  function progress(phase: RpcEvents['core.progress']['phase'], message: string, percent?: number): void {
+    emit('core.progress', percent === undefined ? { phase, message } : { phase, message, percent });
+  }
+
+  function requireGit(): void {
+    if (sim.gitMissing) throw rpcError('io_error', "git: executable file not found in PATH (install git and restart the app)");
+  }
+
+  /** A well-formed https URL with owner and repository; repositories named like *missing* do not exist. */
+  function checkRepoUrl(url: string): void {
+    const m = /^https:\/\/[^\s/]+\/[^\s/]+\/([^\s/]+?)(\.git)?\/?$/.exec(url.trim());
+    if (!m || /missing|nonexistent/i.test(m[1] as string)) {
+      throw rpcError('io_error', `fatal: repository '${url}' not found (check the URL; it must be a reachable git repository)`);
+    }
+  }
+
+  function repoFor(url: string): FakeRepo {
+    let r = repos.get(url);
+    if (!r) repos.set(url, (r = buildFakeRepo(seed, url, mirrors.get(url) ?? new Date().toISOString())));
+    return r;
+  }
+
+  /** Clone (no mirror yet) or fetch; reports progress like git does. */
+  async function ensureMirror(url: string): Promise<FakeRepo> {
+    requireGit();
+    checkRepoUrl(url);
+    const have = mirrors.has(url);
+    if (sim.offline) {
+      if (have) return repoFor(url);
+      throw rpcError('io_error', `fatal: unable to access '${url}/': Could not resolve host: ${new URL(url).host}`);
+    }
+    const steps = have ? 3 : 8;
+    for (let i = 1; i <= steps; i++) {
+      const pct = Math.round((i / steps) * 100);
+      if (have) progress('fetch', `Fetching origin: ${pct}%`, pct);
+      else progress('clone', `Receiving objects: ${pct}% (${Math.round(pct * 117.8)}/11780)`, pct);
+      await pause(have ? 150 : 210);
+    }
+    mirrors.set(url, new Date().toISOString());
+    const r = repoFor(url);
+    r.repo.fetchedAt = mirrors.get(url) as string;
+    return r;
+  }
 
   // ---- events -----------------------------------------------------------------------------------
 
@@ -130,9 +199,9 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
     return state;
   }
 
-  function open(req: unknown, reuseGenerations: boolean): Workspace {
+  function open(req: WorkspaceRequest, reuseGenerations: boolean): Workspace {
     const gens = reuseGenerations ? new Map([...generations].map(([k, v]) => [k, v + 1] as const)) : new Map<number, number>();
-    const r = openWorkspace(world, fs, seed, req, nextWorkspaceId, gens);
+    const r = openWorkspace(world, fs, seed, repoFor(req.core.repoUrl), req, nextWorkspaceId, gens);
     nextWorkspaceId++;
     generations.clear();
     for (const c of r.workspace.contracts) generations.set(c.index, c.generation);
@@ -144,8 +213,8 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
   }
 
   function rememberRecent(req: WorkspaceRequest): void {
-    const key = JSON.stringify([req.coreDir, req.coreRef ?? '', req.stateDir, req.epoch ?? null, req.defines ?? []]);
-    const rest = settings.recentWorkspaces.filter((r) => JSON.stringify([r.coreDir, r.coreRef ?? '', r.stateDir, r.epoch ?? null, r.defines ?? []]) !== key);
+    const keyOf = (r: WorkspaceRequest): string => JSON.stringify([r.core.repoUrl, r.core.ref, r.statePath, r.epoch ?? null, r.defines ?? []]);
+    const rest = settings.recentWorkspaces.filter((r) => keyOf(r) !== keyOf(req));
     settings = { ...settings, recentWorkspaces: [clone(req), ...rest].slice(0, 10) };
   }
 
@@ -238,8 +307,8 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
       homeDir: HOME,
       cwd: CWD,
       pathSeparator: '/',
-      gitAvailable: true,
-      startup: clone(startup),
+      gitAvailable: !sim.gitMissing,
+      defaultRepoUrl: DEFAULT_REPO_URL,
     }),
 
     'settings.get': (): Settings => clone(settings),
@@ -275,18 +344,42 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
       return fs.list(path, p.showHidden === true);
     },
 
-    'core.versions': (params): CoreVersions => {
+    'core.sync': async (params): Promise<CoreRepo> => {
       const p = obj(params);
-      const dir = normalizePath(str(p, 'coreDir'));
-      const limit = int(p, 'limit', { min: 1, max: 1000, optional: true, def: 30 });
-      const node = fs.stat(dir);
-      if (!node) throw rpcError('not_found', `Directory not found: ${dir}`);
-      if (node.kind !== 'dir') throw rpcError('invalid_params', `Not a directory: ${dir}`);
-      return coreVersions(seed, dir, limit);
+      const url = str(p, 'repoUrl').trim();
+      if (p.offline !== undefined && typeof p.offline !== 'boolean') throw rpcError('invalid_params', "'offline' must be a boolean");
+      if (p.offline === true) {
+        if (!mirrors.has(url)) throw rpcError('io_error', `No local mirror of ${url} yet (sync once while online)`);
+        return clone(repoFor(url).repo);
+      }
+      const r = await ensureMirror(url);
+      progress('parse', 'Reading tags and versions', 100);
+      await pause(250);
+      return clone(r.repo);
     },
 
-    'workspace.open': (params): Workspace => {
-      const ws = open(params, false);
+    'core.commits': (params): { total?: number; commits: CoreVersion[] } => {
+      const p = obj(params);
+      const url = str(p, 'repoUrl').trim();
+      const ref = str(p, 'ref');
+      const limit = int(p, 'limit', { min: 1, max: 500, optional: true, def: 50 });
+      const skip = int(p, 'skip', { min: 0, optional: true, def: 0 });
+      const search = str(p, 'search', true).trim().toLowerCase();
+      if (!mirrors.has(url)) throw rpcError('io_error', `No local mirror of ${url}: call core.sync first`);
+      const history = repoFor(url).history(ref);
+      if (!history) throw rpcError('not_found', `Unknown revision '${ref}' in ${url}`);
+      const hits = search ? history.filter((c) => c.subject.toLowerCase().includes(search) || c.sha.startsWith(search)) : history;
+      return { total: hits.length, commits: clone(hits.slice(skip, skip + limit)) };
+    },
+
+    'workspace.open': async (params): Promise<Workspace> => {
+      const req = validateRequest(params);
+      await ensureMirror(req.core.repoUrl);
+      progress('export', `Exporting sources at ${req.core.ref}`, 40);
+      await pause(300);
+      progress('parse', 'Extracting contract layouts', 80);
+      await pause(450);
+      const ws = open(req, false);
       rememberRecent(ws.request);
       return clone(ws);
     },
@@ -442,7 +535,7 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
     if (disposed) throw rpcError('internal', 'The mock backend was disposed');
     if (typeof method !== 'string' || !Object.hasOwn(table, method)) throw rpcError('unknown_method', `Unknown method '${String(method)}'`);
     try {
-      return (table[method] as Handler)(params) as RpcResult<M>;
+      return (await (table[method] as Handler)(params)) as RpcResult<M>;
     } catch (e) {
       if (isRpcError(e)) throw e;
       const err: RpcError = rpcError('internal', e instanceof Error ? e.message : String(e));
@@ -480,7 +573,7 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
     triggerWorkspaceUpdated() {
       if (!state) return;
       const gens = new Map([...generations].map(([k, v]) => [k, v + 1] as const));
-      const r = openWorkspace(world, fs, seed, state.ws.request, nextWorkspaceId, gens);
+      const r = openWorkspace(world, fs, seed, repoFor(state.ws.request.core.repoUrl), state.ws.request, nextWorkspaceId, gens);
       nextWorkspaceId++;
       generations.clear();
       for (const c of r.workspace.contracts) generations.set(c.index, c.generation);
@@ -489,6 +582,13 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
       tableCache.clear();
     keyCache.clear();
       emit('workspace.updated', r.workspace);
+    },
+    getSim: () => ({ ...sim }),
+    setSim(patch) {
+      Object.assign(sim, patch);
+    },
+    forgetMirrors() {
+      mirrors.clear();
     },
     dispose() {
       if (timer !== undefined) clearInterval(timer);

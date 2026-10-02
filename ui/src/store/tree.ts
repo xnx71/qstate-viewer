@@ -2,7 +2,7 @@
 import { atom } from "jotai";
 import { atomFamily } from "jotai-family";
 import { invoke } from "@/rpc/client";
-import type { NodeId, NodeLocation, NodeReveal } from "@/rpc/contract";
+import type { NodeId, NodeReveal } from "@/rpc/contract";
 import { fetchChildren } from "./data";
 import { selectedByteAtom } from "./hex";
 import { prefsAtom } from "./prefs";
@@ -112,11 +112,6 @@ function collapseChildAt(root: TNode, path: number[]): TNode {
   return collapseChild(root, path.slice(0, -1), path[path.length - 1]);
 }
 
-export function setNodeView(contract: number, path: number[], view: TreeView): void {
-  update(contract, (s) => ({ ...s, root: setView(s.root, path, view) }));
-  void loadTotal(contract, path);
-}
-
 export function selectNode(contract: number, sel: Selection | null): void {
   store.set(selectedByteAtom, null);
   update(contract, (s) => ({ ...s, selected: sel }));
@@ -197,17 +192,6 @@ export async function revealNode(contract: number, target: RevealTarget): Promis
   const row = rowIndexOfChild(store.get(treeAtomFamily(contract)).root, indices.slice(0, -1), indices[indices.length - 1]);
   if (row !== null) requestScroll(contract, row);
   return indices;
-}
-
-/** Same as `revealNode` for callers that have a location (id) at hand. */
-export function revealLocation(contract: number, loc: Pick<NodeLocation, "id">): Promise<number[] | null> {
-  return revealNode(contract, { id: loc.id });
-}
-
-/** Select a node (inspector + breadcrumb) without moving the tree: one cheap `state.reveal` call. */
-export async function selectById(contract: number, id: NodeId): Promise<void> {
-  const rv = await fetchReveal(contract, { id });
-  if (rv) selectNode(contract, selectionOf(rv));
 }
 
 export { rowIndexOfPath, updateAtPath };

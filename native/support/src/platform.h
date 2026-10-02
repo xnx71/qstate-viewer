@@ -64,8 +64,13 @@ struct ProcessSpec {
     std::vector<std::string> argv;  // argv[0] is looked up in PATH; no shell is involved
     std::vector<std::pair<std::string, std::string>> extraEnv;
     int timeoutMs = 30000;          // <= 0: no timeout
-    // Receives stdout in chunks. Returning false aborts the process (it is killed, `aborted` is set).
+    // Receives stdout in chunks. Returning false aborts the process (it is stopped, `aborted` is set).
     std::function<bool(const char* data, size_t size)> onStdout;
+    // Receives stderr in chunks as they arrive (git progress lines), in addition to ProcessResult::stderrText.
+    std::function<void(const char* data, size_t size)> onStderr;
+    // Polled about every 100 ms while the process runs; returning true stops it (`cancelled` is set).
+    std::function<bool()> cancel;
+    // ProcessResult::stderrText keeps the LAST maxStderrBytes of stderr.
     size_t maxStderrBytes = 64 * 1024;
 };
 
@@ -73,11 +78,15 @@ struct ProcessResult {
     bool started = false;
     bool timedOut = false;
     bool aborted = false;
+    bool cancelled = false;
     int exitCode = -1;         // valid when started and not killed
     std::string stderrText;
     std::string error;         // spawn / io failure description
 };
 
+// Runs the command to completion. A process that has to be stopped (timeout, abort, cancel) gets SIGTERM together with
+// everything it spawned (own process group) and SIGKILL when it does not end within two seconds; the child is always
+// reaped before this returns.
 ProcessResult runProcess(const ProcessSpec& spec);
 
 }  // namespace qstate::support::platform

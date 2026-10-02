@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EventHub } from "./emitter";
-import { describeError, isAbortError, isRpcErrorLike, RpcException, toRpcError } from "./errors";
-import { apiBaseFromSearch } from "./transports/http";
+import { describeError, explainError, isAbortError, isRpcErrorLike, RpcException, toRpcError } from "./errors";
 
 describe("errors", () => {
   it("recognises RpcError shaped objects only", () => {
@@ -35,17 +34,23 @@ describe("errors", () => {
   });
 });
 
-describe("apiBaseFromSearch", () => {
-  it("is null without the parameter", () => {
-    expect(apiBaseFromSearch("", "http://x")).toBeNull();
-    expect(apiBaseFromSearch("?foo=1", "http://x")).toBeNull();
+describe("explainError", () => {
+  const io = (message: string) => explainError({ code: "io_error", message });
+  it("recognises a missing git", () => {
+    expect(io("git: executable file not found in PATH").title).toBe("git is not installed");
   });
-  it("uses the given base, trimming trailing slashes", () => {
-    expect(apiBaseFromSearch("?api=http://127.0.0.1:8787/", "http://x")).toBe("http://127.0.0.1:8787");
+  it("recognises network failures", () => {
+    expect(io("fatal: unable to access 'https://github.com/qubic/core/': Could not resolve host: github.com").title).toBe("No network connection");
+    expect(io("Connection timed out").title).toBe("No network connection");
   });
-  it("falls back to the origin when empty", () => {
-    expect(apiBaseFromSearch("?api", "http://x:1")).toBe("http://x:1");
-    expect(apiBaseFromSearch("?api=", "http://x:1")).toBe("http://x:1");
+  it("recognises a bad repository", () => {
+    expect(io("fatal: repository 'https://github.com/x/y' not found").title).toBe("Repository not found");
+    expect(io("fatal: not a git repository: /tmp/x").title).toBe("Repository not found");
+  });
+  it("falls back to the code's title and keeps the message", () => {
+    const e = explainError({ code: "schema_error", message: "bad layout" });
+    expect(e).toMatchObject({ title: "Schema could not be extracted", message: "bad layout" });
+    expect(explainError(new Error("boom"))).toMatchObject({ title: "Internal error", message: "boom" });
   });
 });
 

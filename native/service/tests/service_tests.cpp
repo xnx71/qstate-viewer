@@ -15,12 +15,7 @@ using nlohmann::json;
 TEST_CASE("app.info") {
     rpc::Dispatcher d;
     rpc::EventBus bus;
-    service::ServiceConfig config;
-    config.transport = "webview";
-    config.startup.coreDir = "/core";
-    config.startup.stateDir = "/state";
-    config.startup.epoch = 199;
-    service::Service svc(config);
+    service::Service svc{service::ServiceConfig{}};
     svc.registerAll(d, bus);
 
     json r = d.dispatch("app.info", json::object());
@@ -31,12 +26,23 @@ TEST_CASE("app.info") {
     CHECK(info["platform"] == "linux");
     CHECK(info["transport"] == "webview");
     CHECK(info["pathSeparator"] == "/");
-    CHECK(info["gitAvailable"].is_boolean());
+    CHECK(info["gitAvailable"] == true);
+    CHECK(info["defaultRepoUrl"] == "https://github.com/qubic/core");
     CHECK(info["homeDir"].is_string());
     CHECK(info["cwd"].is_string());
     CHECK_FALSE(info["cwd"].get<std::string>().empty());
-    CHECK(info["startup"] == json{{"coreDir", "/core"}, {"stateDir", "/state"}, {"epoch", 199}});
-    CHECK_FALSE(info["startup"].contains("coreRef"));
+    CHECK_FALSE(info.contains("startup"));
+    CHECK(svc.appInfo() == info);
+}
+
+TEST_CASE("app.info reports a missing git") {
+    rpc::Dispatcher d;
+    rpc::EventBus bus;
+    service::ServiceConfig config;
+    config.git.executable = "definitely-not-a-git-binary";
+    service::Service svc(config);
+    svc.registerAll(d, bus);
+    CHECK(d.dispatch("app.info", json::object())["result"]["gitAvailable"] == false);
 }
 
 TEST_CASE("version comes from the CMake project unless overridden") {
@@ -101,17 +107,6 @@ TEST_CASE("handlers keep working after the Service object is gone") {
     CHECK(d.dispatch("workspace.get", json::object())["result"].is_null());
 }
 
-TEST_CASE("the transport of the call overrides the configured one") {
-    rpc::Dispatcher d;
-    rpc::EventBus bus;
-    service::ServiceConfig config;
-    config.transport = "webview";
-    service::Service svc(config);
-    svc.registerAll(d, bus);
-    CHECK(d.dispatch("app.info", json::object())["result"]["transport"] == "webview");
-    CHECK(d.dispatch("app.info", json::object(), "http")["result"]["transport"] == "http");
-}
-
 TEST_CASE("settings.get / settings.update") {
     Harness h;
     json s = h.ok("settings.get");
@@ -159,13 +154,19 @@ TEST_CASE("fs.list") {
     CHECK(r["entries"][2]["kind"] == "file");
     CHECK(r["entries"][3]["size"] == 5);
     CHECK(r["entries"][3]["path"] == (t / "b.txt").string());
-    CHECK(r["hints"]["isCoreRepo"] == false);
-    CHECK(r["hints"]["stateEpochs"] == json::array({5}));
+    CHECK(r["hints"] == json{{"stateEpochs", json::array({5})}});
+    // contractNNNN.EEE files carry the selectable state; nothing else does
+    for (const json& e : r["entries"]) {
+        const std::string name = e["name"];
+        if (name.rfind("contract0001.", 0) == 0) {
+            CHECK(e["state"] == json{{"index", 1}, {"epoch", 5}});
+        } else if (name.rfind("contract", 0) == 0) {
+            CHECK(e["state"]["epoch"] == 5);
+        } else {
+            CHECK_FALSE(e.contains("state"));
+        }
+    }
     CHECK(h.ok("fs.list", {{"path", t.str()}, {"showHidden", true}})["entries"].size() == r["entries"].size() + 1);
-
-    TempDir core;
-    writeFakeCore(core.path());
-    CHECK(h.ok("fs.list", {{"path", core.str()}})["hints"]["isCoreRepo"] == true);
 
     // "" = home directory
     json home = h.ok("fs.list", {{"path", ""}});
@@ -175,17 +176,3 @@ TEST_CASE("fs.list") {
     CHECK(h.errorCode("fs.list", json::object()) == "invalid_params");
 }
 
-TEST_CASE("core.versions of a directory that is not a git repository") {
-    Harness h;
-    TempDir core;
-    writeFakeCore(core.path(), 7);
-    json r = h.ok("core.versions", {{"coreDir", core.str()}});
-    CHECK(r["worktree"]["ref"] == "");
-    CHECK(r["worktree"]["kind"] == "worktree");
-    CHECK(r["worktree"]["version"] == "1.2.3");
-    CHECK(r["worktree"]["epoch"] == 7);
-    CHECK(r["refs"].empty());
-    CHECK(h.errorCode("core.versions", {{"coreDir", (core / "nope").string()}}) == "io_error");
-    CHECK(h.errorCode("core.versions", {{"coreDir", core.str()}, {"limit", 0}}) == "invalid_params");
-    CHECK(h.errorCode("core.versions", json::object()) == "invalid_params");
-}

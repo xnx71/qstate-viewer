@@ -1,39 +1,17 @@
 // Typed RPC client: picks a transport once and exposes invoke / on.
-import type { RpcEventName, RpcEvents, RpcMethod, RpcParams, RpcResult, WorkspaceRequest } from "./contract";
+import type { RpcEventName, RpcEvents, RpcMethod, RpcParams, RpcResult } from "./contract";
 import { EventHub } from "./emitter";
 import { isAbortError, RpcException, toRpcError } from "./errors";
 import { createMockTransport, type MockTransport } from "./transports/mock";
-import { apiBaseFromSearch, createHttpTransport } from "./transports/http";
 import type { Transport } from "./transports/types";
 import { createWebviewTransport, hasWebviewBridge } from "./transports/webview";
 
 const hub = new EventHub();
 let transport: Transport | null = null;
 
-/** Select the transport: webview > http (?api=) > mock. */
-export function selectTransport(): Transport {
-  const search = typeof location !== "undefined" ? location.search : "";
-  const origin = typeof location !== "undefined" && location.origin !== "null" ? location.origin : "";
-  const params = new URLSearchParams(search);
-  if (hasWebviewBridge()) return createWebviewTransport();
-  const forced = params.get("transport");
-  const api = apiBaseFromSearch(search, origin);
-  if (forced !== "mock" && api) return createHttpTransport(api);
-  return createMockTransport({ startup: startupFromSearch(params) });
-}
-
-/** Mock only: `?core=...&state=...&epoch=...&ref=...` simulates the command line arguments. */
-function startupFromSearch(params: URLSearchParams): Partial<WorkspaceRequest> {
-  const startup: Partial<WorkspaceRequest> = {};
-  const core = params.get("core");
-  const state = params.get("state");
-  const ref = params.get("ref");
-  const epoch = params.get("epoch");
-  if (core) startup.coreDir = core;
-  if (state) startup.stateDir = state;
-  if (ref !== null) startup.coreRef = ref;
-  if (epoch && /^\d+$/.test(epoch)) startup.epoch = Number(epoch);
-  return startup;
+/** The native webview bridge when present, otherwise the in-memory mock (plain browser, `pnpm dev`). */
+function selectTransport(): Transport {
+  return hasWebviewBridge() ? createWebviewTransport() : createMockTransport();
 }
 
 export function getTransport(): Transport {
@@ -94,9 +72,4 @@ export async function invoke<M extends RpcMethod>(method: M, params: RpcParams<M
 export function on<E extends RpcEventName>(event: E, handler: (payload: RpcEvents[E]) => void): () => void {
   getTransport();
   return hub.on(event, handler);
-}
-
-/** Make the UI receive events as if native had called `__qstate_emit` (also useful for tests). */
-export function emitEvent(event: string, payload: unknown): void {
-  hub.emit(event, payload);
 }

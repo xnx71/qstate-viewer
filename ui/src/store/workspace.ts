@@ -1,7 +1,7 @@
 // Application / workspace state.
 import { atom } from "jotai";
 import { atomFamily } from "jotai-family";
-import type { AppInfo, ContractInfo, Settings, Workspace } from "@/rpc/contract";
+import type { AppInfo, ContractInfo, RpcEvents, Settings, Workspace } from "@/rpc/contract";
 
 export const appInfoAtom = atom<AppInfo | null>(null);
 export const settingsAtom = atom<Settings | null>(null);
@@ -11,6 +11,9 @@ export type OpenPhase =
   | { phase: "idle" }
   | { phase: "opening"; startedAt: number }
   | { phase: "error"; message: string; code: string };
+/** Latest `core.progress` event of the running core.sync / workspace.open (null when nothing runs). */
+export const coreProgressAtom = atom<RpcEvents["core.progress"] | null>(null);
+
 export const openPhaseAtom = atom<OpenPhase>({ phase: "idle" });
 
 /** Contracts with live updates applied (events replace entries). */

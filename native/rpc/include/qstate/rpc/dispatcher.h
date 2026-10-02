@@ -40,12 +40,9 @@ public:
 // Passed to every handler.
 class CallContext {
 public:
-    CallContext(std::string method, std::shared_ptr<CancelToken> token, std::string transport = {})
-        : method_(std::move(method)), token_(std::move(token)), transport_(std::move(transport)) {}
+    CallContext(std::string method, std::shared_ptr<CancelToken> token) : method_(std::move(method)), token_(std::move(token)) {}
 
     const std::string& method() const noexcept { return method_; }
-    // Which transport delivered the call ("webview", "http", ...), as supplied by it; "" when unspecified.
-    const std::string& transport() const noexcept { return transport_; }
     // True when the caller gave up (dispatchAsync token cancelled) or the dispatcher is shutting down.
     // Long running handlers should poll it (or call throwIfCancelled) between chunks of work.
     bool cancelled() const noexcept { return token_->cancelled(); }
@@ -60,7 +57,6 @@ public:
 private:
     std::string method_;
     std::shared_ptr<CancelToken> token_;
-    std::string transport_;
 };
 
 // Response object: {"result": ...} or {"error": {code, message, data?}}.
@@ -88,17 +84,14 @@ public:
 
     // Runs the handler on the calling thread. Never throws. Unknown method => "unknown_method";
     // rpc::Error => its code; anything else => "internal".
-    nlohmann::json dispatch(const std::string& method, const nlohmann::json& params,
-                            const std::string& transport = {}) const;
+    nlohmann::json dispatch(const std::string& method, const nlohmann::json& params) const;
     nlohmann::json dispatch(const std::string& method, const nlohmann::json& params, CallContext& ctx) const;
 
     // Queues the call for the worker pool and returns immediately. The callback receives the response.
     // Ordering between calls is not guaranteed (a pool runs them concurrently).
     // Cancelling the returned token makes ctx.cancelled() true; a call cancelled before it started is not
     // run: the callback receives {"error": {"code": "internal", "message": "cancelled"}}.
-    // `transport` is reported through CallContext::transport().
-    std::shared_ptr<CancelToken> dispatchAsync(const std::string& method, nlohmann::json params, Callback callback,
-                                               std::string transport = {});
+    std::shared_ptr<CancelToken> dispatchAsync(const std::string& method, nlohmann::json params, Callback callback);
 
     // Cancels queued and running calls, rejects the queued ones through their callbacks, joins the workers.
     // After it returns dispatchAsync() answers every call with the "cancelled" error synchronously.
@@ -111,7 +104,6 @@ private:
         nlohmann::json params;
         Callback callback;
         std::shared_ptr<CancelToken> token;
-        std::string transport;
     };
 
     void workerLoop();

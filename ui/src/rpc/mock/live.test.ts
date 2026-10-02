@@ -12,7 +12,7 @@ describe('live events', () => {
   it('triggerChange bumps the generation and emits contracts.changed with the updated ContractInfo', async () => {
     const b = mk();
     const events: Ev[] = [];
-    b.subscribe((event, payload) => events.push({ event, payload } as Ev));
+    b.subscribe((event, payload) => event !== 'core.progress' && events.push({ event, payload } as Ev));
     b.triggerChange(1); // no workspace yet: nothing happens
     expect(events).toEqual([]);
     const ws = await openDefault(b);
@@ -125,7 +125,7 @@ describe('live events', () => {
   it('triggerWorkspaceUpdated emits workspace.updated with a bumped id and generations', async () => {
     const b = mk();
     const events: Ev[] = [];
-    b.subscribe((event, payload) => events.push({ event, payload } as Ev));
+    b.subscribe((event, payload) => event !== 'core.progress' && events.push({ event, payload } as Ev));
     b.triggerWorkspaceUpdated();
     expect(events).toEqual([]);
     const ws = await openDefault(b);

@@ -71,8 +71,8 @@ TEST_CASE("extract: missing root reports an error instead of throwing") {
 }
 
 TEST_CASE("extract: real core (HEAD) lays out every contract") {
-    const std::string core = testing::coreDir();
-    if (core.empty()) { MESSAGE("QSTATE_TEST_CORE_DIR not set, skipping"); return; }
+    const std::string core = testing::coreRepo();
+    if (core.empty()) { MESSAGE("QSTATE_TEST_CORE_REPO not set, skipping"); return; }
     cpp::DiskSource src(core);
     schema::ExtractResult r = schema::extractSchema(src);
     printErrors(*r.schema);
@@ -91,7 +91,7 @@ TEST_CASE("extract: real core (HEAD) lays out every contract") {
 
 // Core snapshot matching the sample state files (v1.303.2 / epoch 229) + the files themselves.
 TEST_CASE("extract: epoch-229 snapshot sizes equal the real state file sizes") {
-    const std::string core = testing::envOr("QSTATE_TEST_CORE_DIR_229");
+    const std::string core = testing::coreDir229();
     const std::string state = testing::stateDir();
     if (core.empty() || state.empty()) { MESSAGE("QSTATE_TEST_CORE_DIR_229 / QSTATE_TEST_STATE_DIR not set, skipping"); return; }
     cpp::DiskSource src(core);

@@ -99,11 +99,9 @@ TEST_CASE("real QX (contract 1): collections against the python reference number
     auto raw0 = dec.children("f:_assetOrders/e:0", {ChildView::Raw, 0, 10, false}).items;
     REQUIRE(raw0.size() == 6);
     CHECK(json(raw0[2])["value"]["v"] == "1"); // povIndex
-    if (kRealIdentities) {
-        const std::string id0 = json(e0value[0])["value"]["identity"];
-        CHECK(id0.rfind("NPGCDSLR", 0) == 0);
-        CHECK(id0.substr(id0.size() - 4) == "NZSJ");
-    }
+    const std::string id0 = json(e0value[0])["value"]["identity"];
+    CHECK(id0.rfind("NPGCDSLR", 0) == 0);
+    CHECK(id0.substr(id0.size() - 4) == "NZSJ");
     // the element's PoV is slot 1: issuer = QX contract id, asset 'QWALLET'
     auto pov1 = json(dec.node("f:_assetOrders/p:1"))["value"];
     CHECK(pov1["hex"].get<std::string>().substr(0, 64 - 16) == "01" + std::string(46, '0'));

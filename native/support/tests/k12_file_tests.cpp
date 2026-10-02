@@ -23,12 +23,12 @@ void writeBytes(const fs::path& p, const std::vector<uint8_t>& data) {
     f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
 }
 
-// name -> hex digest, from docs/research/k12-spike/digest_229.txt
+// name -> hex digest, from docs/research/data/digest_229.txt
 std::map<std::string, std::string> loadReferenceDigests() {
     std::map<std::string, std::string> result;
     const std::string root = qstate::testing::sourceDir();
     if (root.empty()) return result;
-    std::ifstream in(root + "/docs/research/k12-spike/digest_229.txt");
+    std::ifstream in(root + "/docs/research/data/digest_229.txt");
     std::string line;
     while (std::getline(in, line)) {
         std::istringstream ls(line);

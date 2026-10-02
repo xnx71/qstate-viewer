@@ -54,7 +54,7 @@ export function buildQx(k: Kit): ContractDef {
     { source: { file: 'src/contracts/Qx.h', line: 61 } },
   );
   const orders = collection(t, order, QX_CAPACITY, {
-    population: (c) => Math.round(POP_BASE * (1 + 0.03 * (c.epoch - 192))),
+    population: (c) => Math.round(POP_BASE * (1 + 0.03 * (c.epoch - 229))),
     povCount: () => POV_COUNT,
     priority,
     povValue,

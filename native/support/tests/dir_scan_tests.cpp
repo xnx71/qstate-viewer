@@ -180,10 +180,15 @@ TEST_CASE("dir_scan: listDirectory ordering, hidden filter, hints") {
     CHECK(names == expected);
     CHECK(r.listing.entries[0].isDir);
     CHECK_FALSE(r.listing.entries[0].size.has_value());
-    CHECK(r.listing.hints.isCoreRepo);
-    CHECK(r.listing.hints.isGitRepo);
     CHECK(r.listing.hints.stateEpochs == std::vector<uint32_t>{229, 230, 231});
     for (const auto& e : r.listing.entries) {
+        if (e.name.rfind("contract0001.", 0) == 0) {
+            REQUIRE(e.state.has_value());
+            CHECK(e.state->first == 1);
+            CHECK(e.state->second == std::stoul(e.name.substr(13)));
+        } else {
+            CHECK_FALSE(e.state.has_value());
+        }
         if (e.name == "zeta.txt") {
             CHECK(e.size == std::optional<uint64_t>(5));
             CHECK(e.mtimeMs.has_value());
@@ -197,12 +202,6 @@ TEST_CASE("dir_scan: listDirectory ordering, hidden filter, hints") {
     for (const auto& e : r.listing.entries) names.push_back(e.name);
     CHECK(std::find(names.begin(), names.end(), ".secret") != names.end());
     CHECK(names[0] == ".git");  // hidden dirs sort with the other dirs (ASCII '.' first)
-
-    const auto hints = pathHints(root.string());
-    CHECK(hints.isCoreRepo);
-    CHECK(hints.isGitRepo);
-    CHECK(hints.stateEpochs.size() == 3);
-    CHECK_FALSE(pathHints((root / "beta").string()).isCoreRepo);
 }
 
 TEST_CASE("dir_scan: listDirectory failures") {

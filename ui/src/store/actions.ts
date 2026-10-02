@@ -3,8 +3,9 @@ import { toast } from "sonner";
 import { invoke, on } from "@/rpc/client";
 import type { ContractInfo, Workspace, WorkspaceRequest } from "@/rpc/contract";
 import { describeError, toRpcError } from "@/rpc/errors";
+import { coreLabel } from "@/features/workspace/refs";
 import { clearAllQueries } from "./data";
-import { hydrateFromSettings } from "./prefs";
+import { hydrateFromSettings, updatePrefs } from "./prefs";
 import { store } from "./store";
 import { closeTablesOfContract, openTablesAtom } from "./table";
 import { initTree, refreshTree, resetTreeState, treeAtomFamily } from "./tree";
@@ -12,6 +13,7 @@ import {
   appInfoAtom,
   changeStampsAtom,
   contractsAtom,
+  coreProgressAtom,
   diagnosticsOpenAtom,
   openDialogAtom,
   openPhaseAtom,
@@ -54,6 +56,7 @@ function applyWorkspace(ws: Workspace, keepSelection: boolean): void {
 }
 
 export async function openWorkspace(req: WorkspaceRequest): Promise<boolean> {
+  store.set(coreProgressAtom, null);
   store.set(openPhaseAtom, { phase: "opening", startedAt: Date.now() });
   try {
     const ws = await invoke("workspace.open", req);
@@ -63,8 +66,9 @@ export async function openWorkspace(req: WorkspaceRequest): Promise<boolean> {
     const errors = ws.diagnostics.filter((d) => d.severity === "error").length;
     const warns = ws.diagnostics.filter((d) => d.severity === "warning").length;
     store.set(openDialogAtom, false);
-    toast.success(`Workspace opened: ${ws.contracts.length} contracts`, {
-      description: `${ws.core.version ? `core ${ws.core.version} · ` : ""}epoch ${ws.state.epoch ?? "?"}${errors || warns ? ` · ${errors} errors, ${warns} warnings` : ""}`,
+    updatePrefs({ browseDir: ws.state.dir });
+    toast.success(`Workspace opened: ${ws.contracts.length} ${ws.contracts.length === 1 ? "contract" : "contracts"}`, {
+      description: `${coreLabel(ws.core)}${ws.core.version ? ` (core ${ws.core.version})` : ""} · epoch ${ws.state.epoch ?? "?"}${errors || warns ? ` · ${errors} errors, ${warns} warnings` : ""}`,
       action: errors || warns ? { label: "Diagnostics", onClick: () => store.set(diagnosticsOpenAtom, true) } : undefined,
     });
     refreshSettings();
@@ -74,6 +78,12 @@ export async function openWorkspace(req: WorkspaceRequest): Promise<boolean> {
     store.set(openPhaseAtom, { phase: "error", message: err.message, code: err.code });
     return false;
   }
+}
+
+export function refreshAppInfo(): void {
+  invoke("app.info", {})
+    .then((i) => store.set(appInfoAtom, i))
+    .catch(() => undefined);
 }
 
 function refreshSettings(): void {
@@ -91,19 +101,6 @@ export async function reloadWorkspace(): Promise<void> {
   } catch (e) {
     toast.error(describeError(e), { id });
   }
-}
-
-export async function closeWorkspace(): Promise<void> {
-  try {
-    await invoke("workspace.close", {});
-  } catch {
-    /* ignore */
-  }
-  clearAllQueries();
-  store.set(workspaceAtom, null);
-  store.set(contractsAtom, []);
-  store.set(selectedContractAtom, null);
-  store.set(openTablesAtom, []);
 }
 
 export function selectContract(index: number): void {
@@ -170,9 +167,13 @@ export function installEventHandlers(): void {
   eventsInstalled = true;
   on("contracts.changed", (p) => handleContractsChanged(p.workspaceId, p.contracts));
   on("workspace.updated", handleWorkspaceUpdated);
+  on("core.progress", (p) => store.set(coreProgressAtom, p));
 }
 
 // ---- bootstrap -------------------------------------------------------------------------------
+
+/** The most recent workspace opens on its own only when it is ready this fast; otherwise the dialog takes over. */
+const QUICK_OPEN_MS = 1500;
 
 export async function bootstrap(): Promise<void> {
   installEventHandlers();
@@ -187,12 +188,11 @@ export async function bootstrap(): Promise<void> {
     applyWorkspace(ws, false);
     return;
   }
-  const s = info.startup;
-  if (s.coreDir && s.stateDir) {
-    // Show the dialog (prefilled from the startup arguments) so progress and errors are visible.
-    store.set(openDialogAtom, true);
-    await openWorkspace({ ...s, coreDir: s.coreDir, stateDir: s.stateDir });
-  } else {
-    store.set(openDialogAtom, true);
+  const recent = settings.recentWorkspaces[0];
+  if (recent && info.gitAvailable) {
+    const quick = await Promise.race([openWorkspace(recent), new Promise<null>((r) => setTimeout(r, QUICK_OPEN_MS, null))]);
+    if (quick === true) return;
   }
+  // first run, slow open or failure: the dialog shows the form (prefilled from the recent workspace), progress and errors
+  store.set(openDialogAtom, true);
 }

@@ -15,16 +15,11 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 option(QSTATE_BUILD_TESTS "Build the native unit tests" ON)
 option(QSTATE_BUILD_GUI "Build the desktop app (needs the system webview development files)" ON)
-option(QSTATE_BUILD_UI "Build the web UI with pnpm as part of the native build" ON)
-
-# Restrict the build to some native modules, e.g. -DQSTATE_MODULES="cpp;schema".
-# Empty = every module that is present. Dependencies of a selected module must be selected too.
-set(QSTATE_MODULES "" CACHE STRING "Semicolon separated list of native modules to build (empty = all)")
 
 # Real data for integration tests (tests that need them are skipped when unset).
-set(QSTATE_TEST_CORE_DIR "" CACHE PATH "Qubic core checkout used by integration tests")
-set(QSTATE_TEST_STATE_DIR "" CACHE PATH "Directory with contractNNNN.EEE files used by integration tests")
-set(QSTATE_TEST_CORE_DIR_229 "" CACHE PATH "Plain snapshot of the core sources matching the epoch-229 state files (service tests)")
+set(QSTATE_TEST_CORE_REPO "" CACHE PATH "A git clone of the Qubic core with its tags (used as a local repoUrl, no network needed)")
+set(QSTATE_TEST_STATE_DIR "" CACHE PATH "Directory with the epoch-229 contractNNNN.229 files")
+set(QSTATE_TEST_CORE_DIR_229 "" CACHE PATH "Plain snapshot of the core sources of v1.303.2 (the version of the epoch-229 files)")
 
 if(QSTATE_BUILD_TESTS)
     enable_testing()

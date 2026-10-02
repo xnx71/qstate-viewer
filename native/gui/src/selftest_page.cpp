@@ -1,4 +1,4 @@
-// The built-in page of --headless-selftest. It talks to the host exclusively through the production bridge
+// The built-in page of the bridge self test (QSTATE_SELFTEST=1). It talks to the host exclusively through the production bridge
 // (window.__qstate_invoke / window.__qstate_emit), the same way the real UI does.
 #include "qstate/gui/assets.h"
 
@@ -72,14 +72,13 @@ std::string_view selftestPageHtml() {
 
   async function run() {
     check('window.__qstate_invoke is a function', typeof window.__qstate_invoke === 'function');
-    var cfg = await invoke('selftest.config', {});
 
     var info = await invoke('app.info', {});
     document.getElementById('info').textContent = JSON.stringify(info, null, 2);
     check('app.info: name and version', typeof info.name === 'string' && info.name.length > 0 && /^\d+\.\d+\.\d+/.test(info.version), info.name + ' ' + info.version);
     check('app.info: transport is "webview"', info.transport === 'webview', info.transport);
     check('app.info: platform / pathSeparator', ['linux', 'windows', 'macos'].indexOf(info.platform) >= 0 && (info.pathSeparator === '/' || info.pathSeparator === '\\'), info.platform);
-    check('app.info: cwd, homeDir, gitAvailable, startup', typeof info.cwd === 'string' && typeof info.homeDir === 'string' && typeof info.gitAvailable === 'boolean' && typeof info.startup === 'object', 'git=' + info.gitAvailable);
+    check('app.info: cwd, homeDir, gitAvailable, defaultRepoUrl', typeof info.cwd === 'string' && typeof info.homeDir === 'string' && typeof info.gitAvailable === 'boolean' && typeof info.defaultRepoUrl === 'string', 'git=' + info.gitAvailable);
 
     var unknown = await expectReject(invoke('no.such.method', {}));
     check('unknown method rejects with unknown_method', unknown && unknown.code === 'unknown_method', unknown && unknown.code);
@@ -120,7 +119,7 @@ std::string_view selftestPageHtml() {
     check('workspace.updated bursts are coalesced and the newest wins', wu.length >= 1 && wu.length < 50 && wu[wu.length - 1].payload.n === 49, wu.length + ' of 50 delivered');
 
     // Payload sizes
-    var sizes = cfg.bench ? [1, 5, 20, 50] : [1];
+    var sizes = [1];
     for (var s = 0; s < sizes.length; s++) {
         var bytes = sizes[s] * 1024 * 1024;
         var start = ms();
@@ -130,7 +129,7 @@ std::string_view selftestPageHtml() {
         check('result of ' + sizes[s] + ' MB', typeof blob === 'string' && blob.length === bytes, elapsed.toFixed(0) + ' ms');
     }
     // Request payload (UI -> host) and back
-    var upSizes = cfg.bench ? [1, 5, 20] : [1];
+    var upSizes = [1];
     for (var u = 0; u < upSizes.length; u++) {
         var up = 'u'.repeat(upSizes[u] * 1024 * 1024);
         var startUp = ms();

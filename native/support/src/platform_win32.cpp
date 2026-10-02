@@ -266,8 +266,12 @@ ProcessResult runProcess(const ProcessSpec& spec) {
         }
         if (isOut) {
             if (spec.onStdout && !spec.onStdout(buf.data(), got)) result.aborted = true;
-        } else if (result.stderrText.size() < spec.maxStderrBytes) {
-            result.stderrText.append(buf.data(), std::min<size_t>(got, spec.maxStderrBytes - result.stderrText.size()));
+        } else {
+            if (spec.onStderr) spec.onStderr(buf.data(), got);
+            result.stderrText.append(buf.data(), got);
+            if (result.stderrText.size() > spec.maxStderrBytes) {
+                result.stderrText.erase(0, result.stderrText.size() - spec.maxStderrBytes);
+            }
         }
         return true;
     };
@@ -275,6 +279,10 @@ ProcessResult runProcess(const ProcessSpec& spec) {
         bool progress = false;
         if (outOpen) progress |= pump(outR, outOpen, true);
         if (errOpen && !result.aborted) progress |= pump(errR, errOpen, false);
+        if (spec.cancel && spec.cancel()) {
+            result.cancelled = true;
+            break;
+        }
         if (spec.timeoutMs > 0 && Clock::now() >= deadline) {
             result.timedOut = true;
             break;
@@ -288,7 +296,7 @@ ProcessResult runProcess(const ProcessSpec& spec) {
             }
         }
     }
-    if (result.timedOut || result.aborted) {
+    if (result.timedOut || result.aborted || result.cancelled) {
         ::TerminateProcess(pi.hProcess, 1);
         killed = true;
     }

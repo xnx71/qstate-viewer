@@ -19,16 +19,26 @@ namespace qstate::support {
 
 inline constexpr size_t kMaxRecentWorkspaces = 10;
 
+// contract.ts CoreSource.
+struct CoreSource {
+    std::string repoUrl;   // any URL or local path git understands
+    std::string ref;       // tag, branch, commit sha or "auto" (newest tag whose EPOCH equals the state epoch)
+
+    bool operator==(const CoreSource&) const = default;
+};
+
 // contract.ts WorkspaceRequest.
 struct WorkspaceRequest {
-    std::string coreDir;
-    std::optional<std::string> coreRef;   // "" / nullopt = working tree, "auto" = pick by epoch
-    std::string stateDir;
+    CoreSource core;
+    std::string statePath;                // a directory with contractNNNN.EEE files, or one such file
     std::optional<int> epoch;
     std::vector<std::string> defines;     // omitted from JSON when empty
 
     bool operator==(const WorkspaceRequest&) const = default;
 };
+
+// True when the request has everything the shape requires (non-empty repoUrl, ref and statePath).
+bool isComplete(const WorkspaceRequest& request);
 
 // contract.ts Settings. `theme` is "dark" | "light" | "system".
 struct Settings {
@@ -40,7 +50,8 @@ struct Settings {
 };
 
 // JSON conversion in the contract.ts shapes. from_json never throws: invalid or missing fields keep their defaults,
-// invalid recent entries are skipped and the list is truncated to kMaxRecentWorkspaces.
+// recent entries that are not complete requests (including entries written by older versions, which had another
+// shape) are skipped and the list is truncated to kMaxRecentWorkspaces.
 void to_json(nlohmann::json& j, const WorkspaceRequest& request);
 void from_json(const nlohmann::json& j, WorkspaceRequest& request);
 void to_json(nlohmann::json& j, const Settings& settings);
@@ -48,7 +59,7 @@ void from_json(const nlohmann::json& j, Settings& settings);
 
 bool isValidTheme(const std::string& theme);
 
-// Inserts `request` at the front of `list`; an existing entry with the same coreDir and stateDir (trailing path
+// Inserts `request` at the front of `list`; an existing entry with the same repository, ref and state path (trailing path
 // separators ignored) is replaced; the list is truncated to `maxEntries`.
 void addRecentWorkspace(std::vector<WorkspaceRequest>& list, const WorkspaceRequest& request,
                         size_t maxEntries = kMaxRecentWorkspaces);

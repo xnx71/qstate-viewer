@@ -1,7 +1,5 @@
 #include "qstate/decode/support_glue.h"
 
-#if defined(QSTATE_DECODE_HAS_SUPPORT) && QSTATE_DECODE_HAS_SUPPORT
-
 #include <cstring>
 
 #include "qstate/support/identity.h"
@@ -42,5 +40,3 @@ bool SupportIdentityCodec::decode(std::string_view identity, std::uint8_t* out32
 }
 
 } // namespace qstate::decode
-
-#endif

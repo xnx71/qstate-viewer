@@ -31,10 +31,9 @@ export function DiagnosticsDialog() {
   const shown = useMemo(() => (filter === "all" ? diags : diags.filter((d) => d.severity === filter)), [diags, filter]);
 
   const copyLoc = async (d: Diagnostic) => {
-    const rel = `${d.file}${d.line ? `:${d.line}` : ""}`;
-    const abs = ws ? `${ws.core.sourceDir.replace(/[\\/]+$/, "")}/${rel}` : rel;
-    await copyText(abs);
-    toast.success("Location copied", { description: abs, duration: 2000 });
+    const loc = `${d.file}${d.line ? `:${d.line}` : ""}`;
+    await copyText(loc);
+    toast.success("Location copied", { description: loc, duration: 2000 });
   };
 
   return (
@@ -44,7 +43,7 @@ export function DiagnosticsDialog() {
           <DialogTitle>Diagnostics</DialogTitle>
           <DialogDescription>
             Messages produced while extracting the schema from {ws?.core.version ? `core ${ws.core.version}` : "the core headers"}
-            {ws ? ` (${ws.core.fileCount} files, ${ws.core.parseMs} ms)` : ""}. Click a location to copy its path.
+            {ws ? ` (${ws.core.fileCount} files, ${ws.core.parseMs} ms)` : ""}. Click a location to copy it (relative to the core root).
           </DialogDescription>
         </DialogHeader>
         <div className="flex gap-1.5" role="tablist" aria-label="Severity filter">
@@ -76,7 +75,7 @@ export function DiagnosticsDialog() {
                   <p className="break-words">{d.message}</p>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[0.8rem]">
                     {d.file && (
-                      <button type="button" className="font-mono text-primary hover:underline" onClick={() => void copyLoc(d)} title="Copy absolute path">
+                      <button type="button" className="font-mono text-primary hover:underline" onClick={() => void copyLoc(d)} title="Copy location">
                         {d.file}
                         {d.line ? `:${d.line}` : ""}
                       </button>

@@ -1,7 +1,7 @@
 # qstate-viewer: the desktop app. Everything except the webview calls lives in the qstate_gui library so it
 # can be tested without a display; the executable is only built when the webview development files exist.
 
-qstate_add_library(gui DEPS qstate::service qstate::rpc qstate::httpd nlohmann_json::nlohmann_json)
+qstate_add_library(gui DEPS qstate::service qstate::rpc nlohmann_json::nlohmann_json)
 
 # ui/dist/index.html is compiled into the library (placeholder page when the UI has not been built yet).
 include(QstateEmbed)
@@ -14,11 +14,6 @@ qstate_embed_file(qstate_gui
     PLACEHOLDER "${CMAKE_CURRENT_SOURCE_DIR}/assets/placeholder_index.html")
 
 qstate_add_tests(gui)
-
-# Window-less backend for browser based UI development (no GTK / WebKit needed).
-add_executable(qstate-devserver app/devserver.cpp)
-target_link_libraries(qstate-devserver PRIVATE qstate::gui Threads::Threads)
-qstate_set_warnings(qstate-devserver)
 
 # vendored webview/webview (header only), see native/third_party/README.md
 add_library(qstate_webview INTERFACE)
@@ -40,18 +35,17 @@ add_executable(qstate-viewer app/main.cpp)
 target_link_libraries(qstate-viewer PRIVATE qstate::gui qstate::webview WebviewDeps::WebviewDeps Threads::Threads)
 qstate_set_warnings(qstate-viewer)
 target_compile_definitions(qstate-viewer PRIVATE QSTATE_VERSION_STRING="${PROJECT_VERSION}")
-install(TARGETS qstate-viewer qstate-devserver RUNTIME DESTINATION bin)
+install(TARGETS qstate-viewer RUNTIME DESTINATION bin)
 
-# The bridge self test needs an X server: run it under xvfb-run.
+# The bridge self test (QSTATE_SELFTEST=1, see docs/HOST.md "Testing") needs an X server: run it under xvfb-run.
 find_program(QSTATE_XVFB_RUN xvfb-run)
 if(QSTATE_BUILD_TESTS AND QSTATE_XVFB_RUN)
     add_test(NAME gui_selftest
-        COMMAND "${QSTATE_XVFB_RUN}" -a -s "-screen 0 1280x900x24"
-                $<TARGET_FILE:qstate-viewer> --headless-selftest --selftest-timeout 60)
-    # WebKitGTK in a container / on a virtual display: see docs/HOST.md ("Headless runs").
+        COMMAND "${QSTATE_XVFB_RUN}" -a -s "-screen 0 1280x900x24" $<TARGET_FILE:qstate-viewer>)
+    # WebKitGTK in a container / on a virtual display: see docs/HOST.md ("Testing").
     set_tests_properties(gui_selftest PROPERTIES
         TIMEOUT 120
-        ENVIRONMENT "WEBKIT_DISABLE_COMPOSITING_MODE=1;WEBKIT_DISABLE_DMABUF_RENDERER=1;LIBGL_ALWAYS_SOFTWARE=1;GDK_BACKEND=x11")
+        ENVIRONMENT "QSTATE_SELFTEST=1;WEBKIT_DISABLE_COMPOSITING_MODE=1;WEBKIT_DISABLE_DMABUF_RENDERER=1;LIBGL_ALWAYS_SOFTWARE=1;GDK_BACKEND=x11")
     message(STATUS "qstate-viewer: CTest 'gui_selftest' registered (xvfb-run: ${QSTATE_XVFB_RUN})")
 elseif(QSTATE_BUILD_TESTS)
     message(STATUS "qstate-viewer: xvfb-run not found, the 'gui_selftest' CTest is not registered")

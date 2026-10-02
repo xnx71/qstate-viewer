@@ -98,34 +98,6 @@ export class MockFs {
     });
   }
 
-  private coreRepo(parent: FsNode, name: string, git: boolean, contractFiles: string[]): FsNode {
-    const fill = (d: FsNode): void => {
-      this.file(d, 'CMakeLists.txt', 4_120);
-      this.file(d, 'LICENSE.txt', 11_357);
-      this.file(d, 'README.md', 9_880);
-      this.dir(d, '.github', (g) => this.dir(g, 'workflows', (w) => this.files(w, ['build.yml', 'tests.yml'], 800, 3000)));
-      this.dir(d, 'doc', (g) => this.files(g, ['protocol.md', 'contracts.md', 'qpi.md', 'epoch.md'], 4 * KB, 40 * KB));
-      this.dir(d, 'test', (t) => this.files(t, ['CMakeLists.txt', 'contract_qx.cpp', 'contract_qutil.cpp', 'qpi_collection.cpp', 'test.cpp'], 2 * KB, 90 * KB));
-      this.dir(d, 'src', (s) => {
-        this.file(s, 'qubic.cpp', 612_340);
-        this.file(s, 'public_settings.h', 14_902);
-        this.file(s, 'platform_common.h', 3_804);
-        this.dir(s, 'contract_core', (c) => {
-          this.file(c, 'contract_def.h', 28_461);
-          this.files(c, ['contract_exec.h', 'qpi_collection_impl.h', 'qpi_hash_map_impl.h', 'qpi_trade_impl.h', 'qpi_spectrum_impl.h', 'qpi_proposal_voting.h', 'qpi_ticking_impl.h', 'pre_qpi_def.h', 'qpi.h'], 6 * KB, 160 * KB);
-        });
-        this.dir(s, 'contracts', (c) => {
-          for (const f of contractFiles) this.file(c, f, Math.floor(14 * KB + this.rng.float() * 140 * KB));
-          this.files(c, ['math_lib.h', 'TestExampleA.h', 'TestExampleB.h'], 2 * KB, 30 * KB);
-        });
-        this.dir(s, 'network_core', (n) => this.files(n, ['peers.h', 'tcp4.h', 'private_settings.h'], 2 * KB, 30 * KB));
-        this.dir(s, 'kangaroo_twelve', (n) => this.files(n, ['K12.h', 'keccak.h'], 4 * KB, 20 * KB));
-        this.dir(s, 'text_output', (n) => this.files(n, ['log.h'], 4 * KB, 20 * KB));
-      });
-    };
-    return git ? this.repo(parent, name, fill) : this.dir(parent, name, fill);
-  }
-
   private stateDir(parent: FsNode, name: string, world: World, epochs: readonly number[]): FsNode {
     return this.dir(parent, name, (d) => {
       for (const e of epochs) {
@@ -165,7 +137,7 @@ export class MockFs {
           this.dir(c, 'qstate-viewer', (q) => this.file(q, 'settings.json', 612));
           this.dir(c, 'Code');
         });
-        this.dir(m, '.cache', (c) => this.dir(c, 'qstate', (q) => this.dir(q, 'core-6f1a2c9')));
+        this.dir(m, '.cache', (c) => this.dir(c, 'qstate'));
         this.dir(m, 'Desktop', (d) => this.files(d, ['todo.txt', 'screenshot-0914.png', 'qubic-epoch-calendar.ics'], KB, 900 * KB));
         this.dir(m, 'Documents', (d) => {
           this.dir(d, 'Notes', (n) => this.files(n, ['ideas.md', 'meeting-2026-09-03.md', 'qubic-contracts.md', 'reading-list.md'], 500, 30 * KB));
@@ -191,10 +163,6 @@ export class MockFs {
         });
         this.dir(m, 'Videos');
         this.dir(m, 'qubic', (q) => {
-          const contractFiles = ['Qx.h', 'Quottery.h', 'Random.h', 'QUtil.h', 'MLM.h', 'GeneralQuorumProposal.h', 'SupplyWatcher.h', 'ComputorControlledFund.h', 'Qearn.h'];
-          this.coreRepo(q, 'core', true, contractFiles);
-          this.coreRepo(q, 'core-old', true, contractFiles.slice(0, 7));
-          this.coreRepo(q, 'core-src', false, contractFiles);
           this.stateDir(q, 'state', world, STATE_EPOCHS);
           this.dir(q, 'state-empty', (s) => this.files(s, ['README.txt', 'download.sh'], 200, 2000));
           this.repo(q, 'qubic-cli', (r) => {
@@ -202,7 +170,11 @@ export class MockFs {
             this.dir(r, 'build');
           });
           this.repo(q, 'docs', (r) => this.files(r, ['README.md', 'mkdocs.yml'], KB, 12 * KB));
-          this.dir(q, 'snapshots', (s) => this.stateDir(s, 'epoch-190', world, [190]));
+          this.dir(q, 'snapshots', (s) => {
+            this.stateDir(s, 'epoch-226', world, [226]);
+            this.stateDir(s, 'epoch-205', world, [205]);
+            this.stateDir(s, 'epoch-190', world, [190]);
+          });
           this.file(q, 'wallet-notes.txt', 481);
         });
         this.dir(m, 'work', (w) => {
@@ -238,20 +210,13 @@ export class MockFs {
   }
 
   hints(path: string): PathHints {
-    const d = this.stat(path);
-    const ch = d?.children;
+    const ch = this.stat(path)?.children;
     const epochs = new Set<number>();
-    if (ch) {
-      for (const n of ch.keys()) {
-        const m = STATE_FILE_RE.exec(n);
-        if (m && ch.get(n)?.kind === 'file') epochs.add(Number(m[2]));
-      }
+    for (const [n, node] of ch ?? []) {
+      const m = STATE_FILE_RE.exec(n);
+      if (m && node.kind === 'file') epochs.add(Number(m[2]));
     }
-    return {
-      isCoreRepo: !!this.stat(path + '/src/contract_core/contract_def.h'),
-      isGitRepo: ch?.get('.git')?.kind === 'dir',
-      stateEpochs: [...epochs].sort((a, b) => a - b),
-    };
+    return { stateEpochs: [...epochs].sort((a, b) => a - b) };
   }
 
   /** File names of a directory (for state dir scanning). */
@@ -268,7 +233,11 @@ export class MockFs {
     for (const c of node.children?.values() ?? []) {
       if (!showHidden && c.name.startsWith('.')) continue;
       const e: FsEntry = { name: c.name, path: norm === '/' ? '/' + c.name : norm + '/' + c.name, kind: c.kind, mtimeMs: c.mtimeMs };
-      if (c.kind === 'file') e.size = c.size;
+      if (c.kind === 'file') {
+        e.size = c.size;
+        const m = STATE_FILE_RE.exec(c.name);
+        if (m) e.state = { index: Number(m[1]), epoch: Number(m[2]) };
+      }
       entries.push(e);
     }
     const cmp = (a: FsEntry, b: FsEntry): number => {
