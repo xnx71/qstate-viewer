@@ -1,0 +1,50 @@
+directive counts: {'pragma': 48, 'if': 24, 'define': 522, 'elif': 3, 'else': 26, 'endif': 46, 'include': 154, 'ifndef': 4, 'undef': 119, 'ifdef': 18}
+lib/platform_common/compiler_warnings.h:17: #if defined(_MSC_VER) && !defined(__clang__)
+lib/platform_common/compiler_warnings.h:27: #elif defined(__clang__)
+lib/platform_common/qintrin.h:5: #if defined(_MSC_VER) && !defined(__clang__)
+lib/platform_common/qstdint.h:6: #if defined(__has_include)
+lib/platform_common/qstdint.h:7: #if __has_include(<cstdint>)
+lib/platform_common/qstdint.h:10: #elif __has_include(<stdint.h>)
+lib/platform_common/qstdint.h:16: #ifndef STDINT_USING_STD
+lib/platform_common/qstdint.h:18: #if defined(_MSC_VER) && !defined(__clang__)
+src/common_buffers.h:19: #if ENABLE_QUBIC_LOGGING_EVENT
+src/common_buffers.h:106: #if !defined(NO_UEFI)
+src/common_buffers.h:157: #if !defined(NO_UEFI)
+src/contract_core/contract_def.h:322: #ifdef INCLUDE_CONTRACT_TEST_EXAMPLES
+src/contract_core/contract_def.h:438: #ifdef INCLUDE_CONTRACT_TEST_EXAMPLES
+src/contract_core/contract_def.h:572: #ifdef INCLUDE_CONTRACT_TEST_EXAMPLES
+src/contracts/QUtil.h:77: #if 0
+src/contracts/QUtil.h:1815: #if 0
+src/four_q.h:44: #ifdef __AVX512F__
+src/four_q.h:1237: #ifdef __AVX512F__
+src/kangaroo_twelve.h:324: #if defined(_MSC_VER)
+src/kangaroo_twelve.h:330: #if defined (__AVX512F__) && !GENERIC_K12
+src/kangaroo_twelve.h:667: #if defined (__AVX512F__) && !GENERIC_K12
+src/kangaroo_twelve.h:972: #if defined (__AVX512F__) && !GENERIC_K12
+src/kangaroo_twelve.h:986: #if defined (__AVX512F__) && !GENERIC_K12
+src/kangaroo_twelve.h:1296: #if defined (__AVX512F__) && !GENERIC_K12
+src/kangaroo_twelve.h:1539: #if defined (__AVX512F__) && !GENERIC_K12
+src/network_messages/common_def.h:27: #if defined(NETWORK_MESSAGES_WITHOUT_CORE_DEPENDENCIES)
+src/platform/assert.h:3: #if defined(EXPECT_TRUE)
+src/platform/assert.h:7: #elif defined(NDEBUG)
+src/platform/concurrency.h:8: #ifdef NDEBUG
+src/platform/concurrency.h:64: #ifdef NDEBUG
+src/platform/console_logging.h:14: #ifdef NO_UEFI
+src/platform/console_logging.h:240: #ifdef NO_UEFI
+src/platform/global_var.h:7: #if defined(SINGLE_COMPILE_UNIT)
+src/platform/global_var.h:16: #if defined(DEFINE_VARIABLES_SHARED_BETWEEN_COMPILE_UNITS)
+src/platform/m256.h:238: #if 0
+src/platform/memory.h:3: #ifdef NO_UEFI
+src/platform/memory_util.h:7: #ifdef NO_UEFI
+src/platform/memory_util.h:52: #ifndef NDEBUG
+src/platform/time.h:12: #ifdef NO_UEFI
+src/platform/time.h:222: #ifndef NO_UEFI
+src/private_settings.h:54: #if ENABLE_QUBIC_LOGGING_EVENT
+src/public_settings.h:58: #if AUTO_FORCE_NEXT_TICK_THRESHOLD != 0
+src/qpi/impl/qpi_collection_impl.h:667: #ifdef NO_UEFI
+src/qpi/impl/qpi_collection_impl.h:711: #ifdef NO_UEFI
+src/qpi/impl/qpi_hash_map_impl.h:338: #ifdef NO_UEFI
+src/qpi/impl/qpi_hash_map_impl.h:362: #ifdef NO_UEFI
+src/qpi/impl/qpi_hash_map_impl.h:672: #ifdef NO_UEFI
+src/qpi/impl/qpi_hash_map_impl.h:696: #ifdef NO_UEFI
+src/qpi/impl/qpi_proposals_impl.h:200: #ifndef NDEBUG

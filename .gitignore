@@ -1,0 +1,16 @@
+# native builds
+/build*/
+/.sysroot/
+/.deps/
+compile_commands.json
+
+# ui
+/ui/node_modules/
+/ui/dist/
+/ui/.vite/
+*.tsbuildinfo
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store

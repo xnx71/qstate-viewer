@@ -1,0 +1,17 @@
+# Script mode helper of qstate_embed_file (cmake -P). Inputs: EMBED_TOOL INPUT PLACEHOLDER OUTPUT NAMESPACE SYMBOL.
+if(EXISTS "${INPUT}")
+    set(_file "${INPUT}")
+    set(_placeholder 0)
+else()
+    message(STATUS "embed: ${INPUT} not found, embedding the placeholder page")
+    set(_file "${PLACEHOLDER}")
+    set(_placeholder 1)
+endif()
+set(_tmp "${OUTPUT}.tmp")
+execute_process(COMMAND "${EMBED_TOOL}" "${_file}" "${_tmp}" "${NAMESPACE}" "${SYMBOL}" "${_placeholder}"
+                RESULT_VARIABLE _rc ERROR_VARIABLE _err)
+if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR "embedding ${_file} failed: ${_err}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_tmp}" "${OUTPUT}")
+file(REMOVE "${_tmp}")
