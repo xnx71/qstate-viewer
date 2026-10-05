@@ -11,7 +11,12 @@ namespace {
 std::uint64_t loadLe64(const std::uint8_t* p) {
     std::uint64_t v;
     std::memcpy(&v, p, 8);
-    if constexpr (std::endian::native == std::endian::big) v = __builtin_bswap64(v);
+    if constexpr (std::endian::native == std::endian::big) {
+        v = ((v & 0x00000000000000FFull) << 56) | ((v & 0x000000000000FF00ull) << 40) |
+            ((v & 0x0000000000FF0000ull) << 24) | ((v & 0x00000000FF000000ull) << 8) |
+            ((v & 0x000000FF00000000ull) >> 8) | ((v & 0x0000FF0000000000ull) >> 24) |
+            ((v & 0x00FF000000000000ull) >> 40) | ((v & 0xFF00000000000000ull) >> 56);
+    }
     return v;
 }
 

@@ -73,6 +73,16 @@ TEST_CASE("git: parsePublicSettings") {
     CHECK_FALSE(spaced.version.has_value());
     // A commented out define is not a define.
     CHECK_FALSE(parsePublicSettings("// #define EPOCH 7\n").epoch.has_value());
+
+    // Windows line endings, tabs, a longer macro with the same prefix, and the first definition wins.
+    const auto crlf = parsePublicSettings("#define VERSION_AB 9\r\n#define VERSION_A\t1\r\n#define VERSION_B 2\r\n"
+                                          "#define VERSION_C 3\r\n\t#define\tEPOCH\t12\r\n#define EPOCH 99\r\n");
+    CHECK(crlf.epoch == std::optional<int>(12));
+    CHECK(crlf.version == std::optional<std::string>("1.2.3"));
+    // No value, no digits, or no blank after the name: not a match.
+    CHECK_FALSE(parsePublicSettings("#define EPOCH\n#define EPOCH abc\n#define EPOCH(x) 5\n").epoch.has_value());
+    // No trailing newline at the end of the file.
+    CHECK(parsePublicSettings("#define EPOCH 5").epoch == std::optional<int>(5));
 }
 
 TEST_CASE("git: ref names and shas that may reach git") {

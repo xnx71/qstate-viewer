@@ -79,7 +79,10 @@ scripts/webview-e2e.sh --build-dir build --repo <core clone> --ref auto --state 
 
 Real-data tests skip when the variables are not set. Git behaviour is tested against throw-away repositories (a local
 path is a valid repository URL, so the unit tests need no network); `QSTATE_TEST_NETWORK=1` runs the real flow against
-github.com. Windows and macOS code paths are written but only Linux is verified.
+github.com. Windows and macOS code paths are written but only Linux is verified. On Windows the native tests are off by
+default (they use POSIX facilities); build the app with `-DQSTATE_BUILD_TESTS=OFF` (re-configure an existing build
+directory with that flag, the option is cached) and expect to fix compiler-specific issues: the Windows build has been
+compiled with MSVC only partially.
 
 ## Documentation
 

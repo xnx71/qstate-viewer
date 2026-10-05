@@ -5,6 +5,8 @@
 
 #include <immintrin.h>
 
+#include <cstring>
+
 #include "keccak_impl.h"
 
 namespace qstate::support::detail {
@@ -47,7 +49,7 @@ inline void transpose4(__m256i& r0, __m256i& r1, __m256i& r2, __m256i& r3) {
 
 inline uint64_t loadWord(const uint8_t* p) {
     uint64_t w;
-    __builtin_memcpy(&w, p, 8);
+    std::memcpy(&w, p, 8);
     return w;
 }
 

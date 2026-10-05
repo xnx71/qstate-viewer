@@ -13,7 +13,13 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-option(QSTATE_BUILD_TESTS "Build the native unit tests" ON)
+# The native tests use POSIX facilities (fork, pread, mkdtemp, shell fake-git scripts) and are verified on Linux only.
+if(WIN32)
+    set(_qstate_tests_default OFF)
+else()
+    set(_qstate_tests_default ON)
+endif()
+option(QSTATE_BUILD_TESTS "Build the native unit tests" ${_qstate_tests_default})
 option(QSTATE_BUILD_GUI "Build the desktop app (needs the system webview development files)" ON)
 
 # Real data for integration tests (tests that need them are skipped when unset).

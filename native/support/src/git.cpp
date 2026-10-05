@@ -6,7 +6,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <regex>
 #include <set>
 
 #include "platform.h"
@@ -46,12 +45,39 @@ std::string lowerCase(std::string s) {
     return s;
 }
 
+// Value of `#define <name> <digits>` (first match, one directive per line, blanks allowed around the tokens).
+// Hand-written instead of std::regex: std::regex::multiline is not available in every standard library.
 std::optional<int> defineValue(const std::string& text, const char* name) {
-    const std::regex re(std::string(R"(^[ \t]*#[ \t]*define[ \t]+)") + name + R"([ \t]+(\d+))", std::regex::multiline);
-    std::smatch m;
-    if (std::regex_search(text, m, re)) {
+    const std::string_view wanted(name);
+    const auto isBlank = [](char c) { return c == ' ' || c == '\t'; };
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t eol = text.find('\n', pos);
+        if (eol == std::string::npos) eol = text.size();
+        const std::string_view line(text.data() + pos, eol - pos);
+        pos = eol + 1;
+
+        size_t i = 0;
+        const auto skipBlanks = [&]() {
+            const size_t begin = i;
+            while (i < line.size() && isBlank(line[i])) i++;
+            return i > begin;
+        };
+        skipBlanks();
+        if (i >= line.size() || line[i] != '#') continue;
+        i++;
+        skipBlanks();
+        if (line.compare(i, 6, "define") != 0) continue;
+        i += 6;
+        if (!skipBlanks()) continue;
+        if (line.compare(i, wanted.size(), wanted) != 0) continue;
+        i += wanted.size();
+        if (!skipBlanks()) continue;
+        const size_t digits = i;
+        while (i < line.size() && line[i] >= '0' && line[i] <= '9') i++;
+        if (i == digits) continue;
         try {
-            return std::stoi(m[1].str());
+            return std::stoi(std::string(line.substr(digits, i - digits)));
         } catch (...) {
         }
     }

@@ -4,6 +4,11 @@
 #include <bit>
 #include <cstring>
 
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <immintrin.h>
+#include <intrin.h>
+#endif
+
 #include "k12_internal.h"
 #include "keccak_impl.h"
 
@@ -16,12 +21,20 @@ namespace {
 constexpr size_t kRate = 168;  // (1600 - 256) / 8
 
 bool detectAvx2() {
-#if defined(__x86_64__) || defined(__i386__)
-#if defined(__GNUC__) || defined(__clang__)
-    return detail::avx2Compiled() && __builtin_cpu_supports("avx2");
-#else
-    return false;
-#endif
+    if (!detail::avx2Compiled()) return false;
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+    return __builtin_cpu_supports("avx2");
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    int info[4];
+    __cpuid(info, 0);
+    if (info[0] < 7) return false;
+    __cpuid(info, 1);
+    const bool osxsave = (info[2] & (1 << 27)) != 0;
+    const bool avx = (info[2] & (1 << 28)) != 0;
+    if (!osxsave || !avx) return false;
+    if ((_xgetbv(0) & 6) != 6) return false;  // the OS saves the XMM and YMM state
+    __cpuidex(info, 7, 0);
+    return (info[1] & (1 << 5)) != 0;
 #else
     return false;
 #endif
