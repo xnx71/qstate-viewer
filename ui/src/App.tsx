@@ -6,6 +6,7 @@ import { RpcErrorView } from "@/components/common/RpcErrorView";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ContextMenuHost } from "@/features/contextmenu/ContextMenuHost";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { DiagnosticsDialog } from "@/features/workspace/DiagnosticsDialog";
 import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
@@ -39,11 +40,11 @@ export function App() {
 
   return (
     <TooltipProvider delay={400}>
-      <div className="flex h-full flex-col bg-background text-foreground">
+      <div className="flex h-full flex-col bg-canvas text-fg">
         <TopBar />
         <main className="min-h-0 flex-1">
           {boot.phase === "loading" ? (
-            <div className="flex h-full items-center justify-center gap-2 text-muted-foreground" role="status">
+            <div className="flex h-full items-center justify-center gap-2 text-fg-muted" role="status">
               <Loader2Icon className="size-4 animate-spin" /> Starting…
             </div>
           ) : boot.phase === "error" ? (
@@ -67,7 +68,8 @@ export function App() {
       <DiagnosticsDialog />
       <HelpDialog />
       <CommandPalette />
-      <Toaster position="bottom-right" closeButton={false} toastOptions={{ classNames: { toast: "cn-toast" } }} />
+      <ContextMenuHost />
+      <Toaster position="bottom-right" closeButton={false} />
     </TooltipProvider>
   );
 }

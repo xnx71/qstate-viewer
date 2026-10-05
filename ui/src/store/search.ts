@@ -91,3 +91,10 @@ export async function gotoOffset(contract: number, offset: number): Promise<void
   await revealNode(contract, { offset });
   store.set(selectedByteAtom, { offset, length: 1 });
 }
+
+/** Search the selected contract for a value (used by "Find this value" in the context menus). */
+export async function findValue(query: string, mode: SearchMode): Promise<void> {
+  openSearch();
+  setSearchInput({ query, mode });
+  await runSearch();
+}

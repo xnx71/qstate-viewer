@@ -176,15 +176,15 @@ export function StatePanel({ selection, onSelect, startDir, sep, homeDir, lastDi
           placeholder="Type or paste a folder or state file path, Enter to go"
           spellCheck={false}
           aria-invalid={!!error}
-          className="h-7 font-mono text-[0.85rem]"
+          className="h-9 font-mono text-data"
         />
-        {loading && <Loader2Icon className="mt-1.5 size-4 shrink-0 animate-spin text-muted-foreground" />}
+        {loading && <Loader2Icon className="mt-1.5 size-4 shrink-0 animate-spin text-fg-muted" />}
       </div>
-      <nav aria-label="Path" className="-mt-1 flex h-5 min-w-0 items-center overflow-x-auto font-mono text-[0.8rem] whitespace-nowrap">
+      <nav aria-label="Path" className="-mt-1 flex h-5 min-w-0 items-center overflow-x-auto font-mono text-meta whitespace-nowrap">
         {segs.map((s, i) => (
           <span key={s.path} className="flex items-center">
-            {i > (sep === "/" ? 1 : 0) && <span className="text-muted-foreground/60">{sep}</span>}
-            <button type="button" onClick={() => go(s.path)} className={cn("rounded px-1 hover:bg-accent", i === segs.length - 1 ? "font-semibold" : "text-muted-foreground hover:text-foreground")}>
+            {i > (sep === "/" ? 1 : 0) && <span className="text-fg-subtle">{sep}</span>}
+            <button type="button" onClick={() => go(s.path)} className={cn("rounded px-1 hover:bg-accent", i === segs.length - 1 ? "font-semibold" : "text-fg-muted hover:text-foreground")}>
               {s.label}
             </button>
           </span>
@@ -192,20 +192,20 @@ export function StatePanel({ selection, onSelect, startDir, sep, homeDir, lastDi
       </nav>
 
       {err && (
-        <p role="alert" className="text-[0.82rem] text-destructive">
+        <p role="alert" className="text-meta text-danger">
           {err.message}
         </p>
       )}
 
       <div className="flex min-h-0 flex-1 gap-2">
-        <nav aria-label="Places" className="hidden w-28 shrink-0 flex-col gap-0.5 overflow-y-auto sm:flex">
+        <nav aria-label="Places" className="hidden w-32 shrink-0 flex-col gap-0.5 overflow-y-auto lg:flex">
           {places.map((p) => (
             <PlaceButton key={p.id} place={p} onGo={go} current={data?.path === p.path} />
           ))}
           {recents.length > 0 && (
             <>
-              <div className="mt-1.5 flex items-center gap-1 px-1.5 text-[0.7rem] font-semibold tracking-wider text-muted-foreground uppercase">
-                <ClockIcon className="size-3" /> Recent
+              <div className="mt-1.5 flex items-center gap-1 px-1.5 text-meta font-semibold tracking-wider text-fg-muted uppercase">
+                <ClockIcon className="size-3.5" /> Recent
               </div>
               {recents.map((p) => (
                 <PlaceButton key={p} place={{ id: p, label: baseName(p), path: p, icon: <FolderIcon /> }} onGo={go} current={data?.path === p} />
@@ -221,17 +221,17 @@ export function StatePanel({ selection, onSelect, startDir, sep, homeDir, lastDi
           aria-label="Folder contents"
           aria-activedescendant={rows[active] ? `fs-row-${active}` : undefined}
           onKeyDown={onKey}
-          className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-background/40 p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="@container/fs min-h-0 flex-1 overflow-y-auto rounded-lg border bg-surface-1 p-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           {rows.map((r, i) => (
             <FsRow key={r.kind === "up" ? "up" : r.e.path} id={`fs-row-${i}`} index={i} row={r} active={i === active} selected={r.kind === "entry" && selection?.kind === "file" && selection.path === r.e.path} onActivate={() => activate(r)} onFocusRow={() => setActive(i)} />
           ))}
-          {data && data.entries.length === 0 && <p className="p-3 text-center text-[0.85rem] text-muted-foreground">Empty folder</p>}
+          {data && data.entries.length === 0 && <p className="p-3 text-center text-meta text-fg-muted">Empty folder</p>}
         </div>
       </div>
 
-      <div className="flex items-center gap-2 text-[0.82rem]" data-testid="folder-bar">
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+      <div className="flex items-center gap-2 text-meta" data-testid="folder-bar">
+        <span className="min-w-0 flex-1 truncate text-fg-muted">
           {epochs.length > 0 ? (
             <>
               State files for epoch <b className="font-mono text-foreground">{epochs.join(", ")}</b> in this folder
@@ -255,7 +255,7 @@ function PlaceButton({ place, onGo, current }: { place: Place; onGo: (p: string)
       type="button"
       onClick={() => onGo(place.path)}
       title={place.path}
-      className={cn("flex items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[0.85rem] hover:bg-muted [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted-foreground", current && "bg-accent")}
+      className={cn("flex items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-meta hover:bg-muted [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-muted", current && "bg-accent")}
     >
       {place.icon}
       <span className="truncate">{place.label}</span>
@@ -274,7 +274,7 @@ interface FsRowProps {
 }
 
 function FsRow({ id, index, row, active, selected, onActivate, onFocusRow }: FsRowProps) {
-  const base = "flex w-full items-center gap-2 rounded px-2 py-[3px] text-left text-[0.88rem] [content-visibility:auto] [contain-intrinsic-size:auto_26px]";
+  const base = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-data [content-visibility:auto] [contain-intrinsic-size:auto_34px]";
   const state = row.kind === "entry" ? row.e.state : undefined;
   const dim = row.kind === "entry" && row.e.kind === "file" && !state;
   return (
@@ -290,28 +290,28 @@ function FsRow({ id, index, row, active, selected, onActivate, onFocusRow }: FsR
         onFocusRow();
         onActivate();
       }}
-      className={cn(base, dim ? "text-muted-foreground/60" : "cursor-pointer", selected ? "bg-primary/20 text-foreground" : active ? "bg-muted" : !dim && "hover:bg-muted/60")}
+      className={cn(base, dim ? "text-fg-subtle" : "cursor-pointer", selected ? "bg-sel text-foreground" : active ? "bg-hover" : !dim && "hover:bg-hover")}
     >
       {row.kind === "up" ? (
         <>
-          <CornerLeftUpIcon className="size-4 shrink-0 text-muted-foreground" />
-          <span className="font-mono text-muted-foreground">..</span>
+          <CornerLeftUpIcon className="size-4 shrink-0 text-fg-muted" />
+          <span className="font-mono text-fg-muted">..</span>
         </>
       ) : row.e.kind === "dir" ? (
         <>
-          <FolderIcon className="size-4 shrink-0 text-sky-500 dark:text-sky-400" />
+          <FolderIcon className="size-4 shrink-0 text-k-struct" />
           <span className="min-w-0 flex-1 truncate">{row.e.name}</span>
         </>
       ) : (
         <>
-          {state ? <FileTextIcon className="size-4 shrink-0 text-primary" /> : <FileIcon className="size-4 shrink-0 opacity-50" />}
+          {state ? <FileTextIcon className="size-4 shrink-0 text-brand-text" /> : <FileIcon className="size-4 shrink-0 opacity-50" />}
           <span className={cn("min-w-0 flex-1 truncate", state && "font-mono")}>{row.e.name}</span>
           {state && (
-            <span className="shrink-0 rounded bg-primary/15 px-1 font-mono text-[0.75rem] text-primary tabular">
+            <span className="chip hidden shrink-0 rounded-md px-1.5 font-mono text-meta text-brand-text tabular @min-[480px]/fs:inline">
               #{state.index} · epoch {state.epoch}
             </span>
           )}
-          {row.e.size !== undefined && <span className="w-[4.2rem] shrink-0 text-right font-mono text-[0.78rem] tabular">{fmtBytes(row.e.size)}</span>}
+          {row.e.size !== undefined && <span className="hidden w-[4.5rem] shrink-0 text-right font-mono text-meta tabular @min-[300px]/fs:inline">{fmtBytes(row.e.size)}</span>}
         </>
       )}
     </div>
@@ -321,27 +321,27 @@ function FsRow({ id, index, row, active, selected, onActivate, onFocusRow }: FsR
 function SelectionSummary({ selection, onSelect }: { selection: StateSelection | null; onSelect: (s: StateSelection) => void }) {
   if (!selection) {
     return (
-      <div className="rounded-lg border border-dashed px-2.5 py-1.5 text-[0.82rem] text-muted-foreground" data-testid="selection">
+      <div className="rounded-lg border border-dashed px-2.5 py-1.5 text-meta text-fg-muted" data-testid="selection">
         Nothing selected: open a folder with state files and use it, or click one state file.
       </div>
     );
   }
   const file = selection.kind === "file";
   return (
-    <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-2.5 py-1.5 text-[0.82rem]" data-testid="selection" data-scope={selection.kind}>
-      {file ? <FileTextIcon className="size-4 shrink-0 text-primary" /> : <FolderOpenIcon className="size-4 shrink-0 text-primary" />}
+    <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-2.5 py-1.5 text-meta" data-testid="selection" data-scope={selection.kind}>
+      {file ? <FileTextIcon className="size-4 shrink-0 text-brand-text" /> : <FolderOpenIcon className="size-4 shrink-0 text-brand-text" />}
       <div className="min-w-0 flex-1">
         <div className="truncate font-mono" title={selection.path}>
           {shortenPath(selection.path, 56)}
         </div>
-        <div className="text-muted-foreground">{file ? `Single state file · epoch ${selection.epoch}` : selection.epochs.length > 1 ? "Folder · choose the epoch" : `Folder${selection.epochs[0] !== undefined ? ` · epoch ${selection.epochs[0]}` : ""}`}</div>
+        <div className="text-fg-muted">{file ? `Single state file · epoch ${selection.epoch}` : selection.epochs.length > 1 ? "Folder · choose the epoch" : `Folder${selection.epochs[0] !== undefined ? ` · epoch ${selection.epochs[0]}` : ""}`}</div>
       </div>
       {!file && selection.epochs.length > 1 && (
         <div role="group" aria-label="Epoch" className="flex shrink-0 gap-0.5 rounded-md bg-muted p-0.5">
           {[...selection.epochs].reverse().map((e) => {
             const on = (selection.epoch ?? selection.epochs[selection.epochs.length - 1]) === e;
             return (
-              <button key={e} type="button" aria-pressed={on} onClick={() => onSelect({ ...selection, epoch: e })} className={cn("rounded px-1.5 font-mono text-[0.78rem] tabular", on ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+              <button key={e} type="button" aria-pressed={on} onClick={() => onSelect({ ...selection, epoch: e })} className={cn("rounded px-1.5 font-mono text-meta tabular", on ? "bg-background font-medium shadow-sm" : "text-fg-muted hover:text-foreground")}>
                 {e}
               </button>
             );

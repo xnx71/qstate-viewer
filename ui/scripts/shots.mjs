@@ -1,9 +1,10 @@
 // Screenshot tour (headless Chrome) against the mock backend.
-// Usage: node scripts/shots.mjs <outDir> [--url=http://localhost:5199/] [--mode=file|setcontent] [--prefix=dev] [--size=1100x700]
+// Usage: node scripts/shots.mjs <outDir> [--prefix=a] [--size=1500x900] [--theme=dark|light] [--ui=compact|comfortable|large]
+//                                        [--part=all|dialog|main] [--url=http://localhost:5199/] [--mode=file|setcontent]
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { clickText, gotoFolder, launch, openWorkspace, pickTag, sleep, typeInto, chooseFolder, waitFor, waitSynced, watchErrors } from "./lib.mjs";
+import { chooseFolder, clickText, expandRow, gotoFolder, launch, openWorkspace, pickTag, sleep, typeInto, waitSynced, watchErrors } from "./lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const out = process.argv[2];
@@ -12,87 +13,134 @@ const dist = path.resolve(here, "../dist/index.html");
 const mode = opt("mode") ?? (opt("url") ? "url" : "file");
 const prefix = opt("prefix") ?? mode;
 const [vw, vh] = (opt("size") ?? "1500x900").split("x").map(Number);
+const theme = opt("theme") ?? "dark";
+const uiSize = opt("ui") ?? "comfortable";
+const part = opt("part") ?? "all";
 const shot = (page, name) => page.screenshot({ path: path.join(out, `${prefix}-${name}.png`) });
 const STATE = "/home/mock/qubic/state";
 
 const browser = await launch();
 const page = await browser.newPage();
 await page.setViewport({ width: vw, height: vh });
+await page.evaluateOnNewDocument(
+  (t, s) => {
+    try {
+      localStorage.setItem("qstate.theme", t);
+      localStorage.setItem("qstate.uiSize", s);
+    } catch {
+      /* none */
+    }
+  },
+  theme,
+  uiSize,
+);
 const errors = watchErrors(page);
 if (mode === "url") await page.goto(opt("url"), { waitUntil: "load" });
 else if (mode === "file") await page.goto(pathToFileURL(dist).href, { waitUntil: "load" });
 else {
-  // webview-like: set_html into an opaque origin (about:blank), no network
   await page.goto("about:blank");
   await page.setContent(readFileSync(dist, "utf8"), { waitUntil: "load" });
 }
 
-// ---- open dialog: first run, sync in progress
+const press = async (combo) => {
+  const keys = combo.split("+");
+  for (const k of keys.slice(0, -1)) await page.keyboard.down(k);
+  await page.keyboard.press(keys[keys.length - 1]);
+  for (const k of keys.slice(0, -1).reverse()) await page.keyboard.up(k);
+};
+const rightClick = async (el, dx = 100, dy = 0) => {
+  const b = await el.boundingBox();
+  await page.mouse.click(b.x + Math.min(dx, b.width - 4), b.y + b.height / 2 + dy, { button: "right" });
+  await sleep(350);
+};
+const rows = () => page.$$("[role=treeitem]");
+const rowWith = async (text) => {
+  for (const r of await rows()) if ((await r.evaluate((e) => e.textContent)).includes(text)) return r;
+  return null;
+};
+
+// ---------------------------------------------------------------- open dialog
 await page.waitForSelector('input[aria-label="Repository URL"]', { timeout: 15000 });
-await sleep(900);
-await shot(page, "01-dialog-sync-progress");
-await waitSynced(page);
-await sleep(300);
-await shot(page, "02-dialog-auto-empty");
+if (part !== "main") {
+  await sleep(900);
+  await shot(page, "01-dialog-sync-progress");
+  await waitSynced(page);
+  await sleep(300);
+  await shot(page, "02-dialog-auto-empty");
+  await gotoFolder(page, STATE, "contract0001.229");
+  await page.evaluate(() => document.querySelector("[role=option][data-state]")?.click());
+  await page.waitForSelector("[data-testid=selection][data-scope=file]");
+  await sleep(200);
+  await shot(page, "03-dialog-file-selected");
+  await chooseFolder(page, 229);
+  await sleep(200);
+  await shot(page, "04-dialog-folder-auto");
+  await clickText(page, "Tags", "[role=tab]");
+  await sleep(200);
+  await shot(page, "05-dialog-tags");
+  await pickTag(page, "1.303.1");
+  await sleep(150);
+  await shot(page, "06-dialog-tag-picked");
+  await clickText(page, "Branches", "[role=tab]");
+  await sleep(150);
+  await shot(page, "07-dialog-branches");
+  await clickText(page, "Commit", "[role=tab]");
+  await page.waitForSelector('[role=listbox][aria-label="Commits"] [role=option]');
+  await sleep(300);
+  await shot(page, "08-dialog-commits");
+  await typeInto(page, 'input[aria-label^="Search commits"]', "QBOND");
+  await sleep(800);
+  await shot(page, "09-dialog-commits-search");
+  await page.evaluate(() => document.querySelector('[role=listbox][aria-label="Commits"] [role=option]')?.click());
+  await sleep(150);
+  await clickText(page, "Auto", "[role=tab]");
+  await openWorkspace(page);
+} else {
+  await waitSynced(page);
+  await gotoFolder(page, STATE, "contract0001.229");
+  await chooseFolder(page, 229);
+  await openWorkspace(page);
+}
+if (part === "dialog") {
+  await browser.close();
+  console.log(`${prefix}: errors`, errors);
+  process.exit(0);
+}
 
-// ---- folder browser with a state file selected
-await gotoFolder(page, STATE, "contract0001.229");
-await page.evaluate(() => document.querySelector("[role=option][data-state]")?.click());
-await page.waitForSelector("[data-testid=selection][data-scope=file]");
-await sleep(200);
-await shot(page, "03-dialog-file-selected");
-
-// ---- folder selected, auto mode resolves a tag
-await chooseFolder(page, 229);
-await sleep(200);
-await shot(page, "04-dialog-folder-auto");
-
-// ---- ref modes
-await clickText(page, "Tags", "[role=tab]");
-await sleep(200);
-await shot(page, "05-dialog-tags");
-await pickTag(page, "1.303.1");
-await sleep(150);
-await shot(page, "06-dialog-tag-picked");
-await clickText(page, "Branches", "[role=tab]");
-await sleep(150);
-await shot(page, "07-dialog-branches");
-await clickText(page, "Commit", "[role=tab]");
-await page.waitForSelector('[role=listbox][aria-label="Commits"] [role=option]');
-await sleep(300);
-await shot(page, "08-dialog-commits");
-await typeInto(page, 'input[aria-label^="Search commits"]', "QBOND");
-await sleep(800);
-await shot(page, "09-dialog-commits-search");
-await page.evaluate(() => document.querySelector('[role=listbox][aria-label="Commits"] [role=option]')?.click());
-await sleep(150);
-await clickText(page, "Auto", "[role=tab]");
-
-// ---- open
-await openWorkspace(page);
-await sleep(600);
+// ---------------------------------------------------------------- main window
+await sleep(500);
 await page.evaluate(() => document.querySelector("[role=option][data-contract='1']")?.click());
 await page.waitForSelector("[role=treeitem]", { timeout: 15000 });
-await sleep(400);
+await sleep(800);
+await shot(page, "10a-main-tree-initial");
+await expandRow(page, "_assetOrders");
+await sleep(600);
+await (await rowWith("_assetOrders")).evaluate((e) => e.scrollIntoView());
+const target = (await rows())[12] ?? (await rows())[5];
+await target.click();
+await sleep(500);
+const hoverRow = (await rows())[4];
+await hoverRow.hover();
+await sleep(200);
+await shot(page, "10b-main-tree-selected-hover");
+
+// containers of several kinds: scroll to the PoV array of the raw view
 await page.evaluate(() => {
   const row = [...document.querySelectorAll("[role=treeitem]")].find((r) => r.textContent.includes("_assetOrders"));
-  row?.querySelector("[aria-label=Expand]")?.click();
+  row?.click();
 });
-await waitFor(page, () => document.querySelectorAll("[role=treeitem]").length > 11, null, 15000, "assetOrders children");
-await sleep(600);
-await page.evaluate(() => {
-  const rows = [...document.querySelectorAll("[role=treeitem]")];
-  const i = rows.findIndex((r) => r.textContent.includes("_assetOrders"));
-  rows[i + 2]?.click();
-});
-await sleep(800);
-await shot(page, "10-main-tree-expanded");
-
+await sleep(300);
+await clickText(page, "Type", "[role=tab]");
+await sleep(500);
+await shot(page, "11a-inspector-type");
 await clickText(page, "Bytes", "[role=tab]");
 await sleep(1000);
-await shot(page, "11-inspector-hex");
+await shot(page, "11b-inspector-hex");
 await clickText(page, "Overview", "[role=tab]");
+await sleep(300);
+await shot(page, "11c-inspector-overview-container");
 
+// table
 await page.evaluate(() => {
   const row = [...document.querySelectorAll("[role=treeitem]")].find((r) => r.textContent.includes("_assetOrders"));
   row?.querySelector("[aria-label='Open as table']")?.click();
@@ -122,47 +170,141 @@ await page.evaluate(() => document.querySelector("[role=grid] [role=row][aria-ro
 await sleep(1500);
 await shot(page, "12c-table-sorted-filtered");
 
-await page.keyboard.down("Control");
-await page.keyboard.press("KeyK");
-await page.keyboard.up("Control");
+// table context menus: cell and header
+const cell = (await page.$$("[role=grid] [role=row][aria-rowindex] [role=gridcell]"))[7];
+await rightClick(cell, 60);
+await shot(page, "13a-ctx-table-cell");
+await page.keyboard.press("Escape");
+const header = (await page.$$("[role=columnheader]"))[2];
+await rightClick(header, 60);
+await shot(page, "13b-ctx-table-header");
+await page.keyboard.press("Escape");
+await sleep(200);
+
+// wide table: horizontal scroll with a long identity column
+await page.evaluate(() => {
+  const g = document.querySelector("[role=grid]");
+  g.scrollLeft = 400;
+});
+await sleep(300);
+await shot(page, "12d-table-wide-scrolled");
+await page.evaluate(() => (document.querySelector("[role=grid]").scrollLeft = 0));
+
+// palette
+await press("Control+KeyK");
 await page.waitForSelector("[data-slot=command-input]");
 await sleep(300);
-await shot(page, "13a-palette");
+await shot(page, "14a-palette");
 await page.type("[data-slot=command-input]", "qut");
 await sleep(400);
-await shot(page, "13b-palette-contract");
+await shot(page, "14b-palette-contract");
 await page.keyboard.press("Escape");
 await sleep(300);
 
-await page.keyboard.down("Control");
-await page.keyboard.press("KeyF");
-await page.keyboard.up("Control");
+// find
+await press("Control+KeyF");
 await page.waitForSelector("#find-input");
 await page.type("#find-input", "QX");
 await page.keyboard.press("Enter");
 await sleep(2000);
-await shot(page, "14-find");
+await shot(page, "15a-find");
+const hit = (await page.$$("[data-match]"))[2];
+if (hit) {
+  await rightClick(hit, 200);
+  await shot(page, "15b-ctx-search-result");
+  await page.keyboard.press("Escape");
+}
 
-await page.click("[aria-label='Toggle theme']");
+// back to the tree: context menus of nodes
+await page.evaluate(() => document.querySelector("[role=tab]")?.click());
+await sleep(500);
+const idRow = await rowWith("value");
+if (idRow) {
+  await rightClick(idRow, 250);
+  await shot(page, "16a-ctx-identity");
+  await page.keyboard.press("Escape");
+}
+const container = await rowWith("_assetOrders");
+if (container) {
+  await rightClick(container, 150);
+  await shot(page, "16b-ctx-container");
+  await page.keyboard.press("Escape");
+}
+const first = (await rows())[2];
+await rightClick(first, 150);
+await sleep(100);
+await page.evaluate(() => [...document.querySelectorAll("[data-ctx-menu] [role=menuitem]")].find((e) => e.textContent.trim() === "Copy")?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true })));
+await sleep(200);
+await shot(page, "16c-ctx-int-copy-submenu");
+await page.keyboard.press("Escape");
+await sleep(200);
+
+// settings popover
+await page.click("[aria-label='Settings']");
+await sleep(400);
+await shot(page, "17-settings");
+await page.keyboard.press("Escape");
+await sleep(200);
+
+// contracts: context menu, size mismatch, schema error, missing file
+await rightClick(await page.$("[role=option][data-contract='1']"), 60);
+await shot(page, "18a-ctx-contract");
+await page.keyboard.press("Escape");
+await page.evaluate(() => document.querySelector("[role=option][data-contract='3']")?.click());
+await sleep(900);
+await shot(page, "18b-size-mismatch");
+await page.evaluate(() => document.querySelector("[role=option][data-contract='5']")?.click());
 await sleep(600);
-await shot(page, "15-light");
-await page.click("[aria-label='Toggle theme']");
+await shot(page, "18c-schema-error-empty-state");
+await page.evaluate(() => document.querySelector("[role=option][data-contract='7']")?.click());
+await sleep(600);
+await shot(page, "18d-missing-file-empty-state");
+await page.evaluate(() => document.querySelector("[role=option][data-contract='1']")?.click());
+await sleep(500);
+
+// diagnostics dialog and help dialog
+await page.evaluate(() => [...document.querySelectorAll("aside button")].find((b) => /errors,/.test(b.textContent))?.click());
+await sleep(500);
+await shot(page, "19a-diagnostics");
+await page.keyboard.press("Escape");
+await sleep(300);
+await page.keyboard.press("?");
+await sleep(500);
+await shot(page, "19b-help");
+await page.keyboard.press("Escape");
 await sleep(300);
 
-// ---- "change": dialog prefilled from the open workspace, then single-file workspace
+// application context menu and toast
+await page.mouse.click(vw / 2, vh - 10, { button: "right" });
+await sleep(350);
+await shot(page, "20a-ctx-app");
+await page.keyboard.press("Escape");
+await page.click("[aria-label='Reload workspace']");
+await sleep(250);
+await shot(page, "20b-toast-reload");
+await sleep(1500);
+
+// theme toggle
+await page.click("[aria-label='Toggle theme']");
+await sleep(700);
+await shot(page, "21-other-theme");
+await page.click("[aria-label='Toggle theme']");
+await sleep(400);
+
+// "change" dialog prefilled from the open workspace, then single-file workspace
 await page.click("[aria-label='Workspace: change']");
 await page.waitForSelector('input[aria-label="Repository URL"]');
 await waitSynced(page);
 await sleep(300);
-await shot(page, "16-dialog-change");
+await shot(page, "22-dialog-change");
 await gotoFolder(page, STATE, "contract0001.229");
 await page.evaluate(() => [...document.querySelectorAll("[role=option][data-state]")].find((o) => o.textContent.includes("contract0001.228"))?.click());
 await page.waitForSelector("[data-testid=selection][data-scope=file]");
 await openWorkspace(page);
 await sleep(500);
-await shot(page, "17-main-single-file");
+await shot(page, "23-main-single-file");
 
-// ---- errors: git missing, offline without a mirror, offline with a stale mirror
+// errors: git missing, offline without a mirror, offline with a stale mirror
 const menu = async (text) => {
   await page.click("[aria-label='Mock backend controls']");
   await sleep(200);
@@ -174,7 +316,7 @@ const menu = async (text) => {
 await menu("git not installed");
 await page.click("[aria-label='Workspace: change']");
 await sleep(500);
-await shot(page, "18-dialog-git-missing");
+await shot(page, "24-dialog-git-missing");
 await page.keyboard.press("Escape");
 await sleep(300);
 await menu("git not installed");
@@ -182,18 +324,18 @@ await menu("no network");
 await menu("Forget local");
 await page.click("[aria-label='Workspace: change']");
 await sleep(900);
-await shot(page, "19-dialog-offline-no-mirror");
+await shot(page, "25-dialog-offline-no-mirror");
 await page.keyboard.press("Escape");
 await sleep(300);
-await menu("no network"); // back online
+await menu("no network");
 await page.click("[aria-label='Workspace: change']");
 await waitSynced(page);
 await page.keyboard.press("Escape");
 await sleep(300);
-await menu("no network"); // offline again, mirror exists
+await menu("no network");
 await page.click("[aria-label='Workspace: change']");
 await sleep(1200);
-await shot(page, "20-dialog-offline-stale-mirror");
+await shot(page, "26-dialog-offline-stale-mirror");
 
 await sleep(300);
 await browser.close();

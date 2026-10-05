@@ -66,3 +66,6 @@ export function patchTableUi(key: string, patch: Partial<TableUiState>): void {
 export function closeTablesOfContract(contract: number): void {
   for (const t of store.get(openTablesAtom)) if (t.contract === contract) closeTable(t.key);
 }
+
+/** Request to open the "add filter" popover of a table with a column preselected (context menu: "Filter column…"). */
+export const filterRequestAtom = atom<{ key: string; column: string; nonce: number } | null>(null);

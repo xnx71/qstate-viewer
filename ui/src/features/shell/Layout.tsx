@@ -26,13 +26,13 @@ export function Layout() {
   const saved = prefs.layout;
   return (
     <ResizablePanelGroup orientation="horizontal" id="main-h" defaultLayout={pick(saved, ["sidebar", "center", "inspector"])} onLayoutChanged={save}>
-      <ResizablePanel id="sidebar" defaultSize="17" minSize={190} maxSize={420}>
+      <ResizablePanel id="sidebar" defaultSize="18" minSize={232} maxSize={420}>
         <ContractSidebar />
       </ResizablePanel>
       <ResizableHandle withHandle />
       <ResizablePanel id="center" defaultSize="50" minSize={320}>
         <ResizablePanelGroup orientation="vertical" id="center-v" defaultLayout={find ? pick(saved, ["content", "find"]) : undefined} onLayoutChanged={(l) => find && save(l)}>
-          <ResizablePanel id="content" defaultSize="68" minSize={120}>
+          <ResizablePanel id="content" defaultSize="68" minSize={120} className="bg-surface-1">
             <CenterPane />
           </ResizablePanel>
           {find && (
@@ -48,7 +48,7 @@ export function Layout() {
         </ResizablePanelGroup>
       </ResizablePanel>
       <ResizableHandle withHandle />
-      <ResizablePanel id="inspector" defaultSize="33" minSize={260} maxSize={720}>
+      <ResizablePanel id="inspector" defaultSize="33" minSize={260} maxSize={720} className="bg-surface-2">
         <ErrorBoundary resetKey={selected} label="The inspector">
           <Inspector />
         </ErrorBoundary>

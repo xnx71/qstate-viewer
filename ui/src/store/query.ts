@@ -34,6 +34,8 @@ export interface QueryFamily<T> {
   has(base: string, version: string): boolean;
   /** Synchronous peek at a ready value (current or previous version). */
   peek(base: string, version?: string): T | undefined;
+  /** Mark the newest cached data of `base` as recently used (protects what the viewport shows from LRU eviction). */
+  retain(base: string): void;
   /** Drop everything whose base satisfies the predicate. */
   invalidate(pred?: (base: string) => boolean): void;
   size(): number;
@@ -105,6 +107,10 @@ export function createQueryFamily<T>(maxEntries = 600): QueryFamily<T> {
       }
       return lastGood.get(base)?.data;
     },
+    retain(base) {
+      const good = lastGood.get(base);
+      if (good) touch(keyOf(base, good.version), base);
+    },
     invalidate(pred) {
       for (const [key, base] of [...order]) {
         if (pred && !pred(base)) continue;
@@ -122,21 +128,32 @@ export function createQueryFamily<T>(maxEntries = 600): QueryFamily<T> {
 
 const DISABLED = atom<QState<never>>(IDLE);
 
-/** Subscribe to a query and trigger the fetch when it is not cached. `base === null` disables it. */
+export interface UseQueryOptions {
+  /**
+   * Allow this hook to start the fetch (default). With `false` the hook only READS: it still subscribes to the key and
+   * serves the cached or previous-generation data, it just never requests anything (a page loader does that). This is
+   * what lets scrolling suspend requests without the rows that are already loaded turning into placeholders.
+   */
+  fetch?: boolean;
+}
+
+/** Subscribe to a query and trigger the fetch when it is not cached. `base === null` disables it entirely. */
 export function useQuery<T>(
   family: QueryFamily<T>,
   base: string | null,
   version: string,
   fetcher: () => Promise<T>,
+  options: UseQueryOptions = {},
 ): QueryResult<T> {
+  const allowFetch = options.fetch !== false;
   const a = base === null ? (DISABLED as unknown as PrimitiveAtom<QState<T>>) : family.atomFor(`${base}@${version}`);
   const state = useAtomValue(a);
   useEffect(() => {
     if (base === null) return;
     // Re-evaluated whenever the atom is idle again (evicted / invalidated) too.
-    if (state.status === "idle") family.fetch(base, version, fetcher).catch(() => undefined);
+    if (allowFetch && state.status === "idle") family.fetch(base, version, fetcher).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, version, state.status, family]);
+  }, [base, version, state.status, family, allowFetch]);
   const retry = () => {
     if (base !== null) store.set(a, IDLE);
   };

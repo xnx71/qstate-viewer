@@ -1,4 +1,5 @@
 import { ChevronRightIcon, TableIcon } from "lucide-react";
+import { motion } from "motion/react";
 import { memo } from "react";
 import { Value } from "@/features/values/Value";
 import { fmtBytes, fmtHexOffset } from "@/lib/format";
@@ -8,9 +9,6 @@ import { useChildrenPage, useNode, CHILD_PAGE } from "@/store/data";
 import { ContainerBar } from "./ContainerBar";
 import { NodeIcon } from "./NodeIcon";
 
-export const ROW_H = 26;
-const INDENT = 14;
-
 interface PresentationProps {
   info: NodeInfo | undefined;
   depth: number;
@@ -19,10 +17,16 @@ interface PresentationProps {
   focused: boolean;
   loadingChildren: boolean;
   showOffsets: boolean;
+  /** Rows that appeared because their parent was just expanded fade in with this stagger (ms); undefined = no animation. */
+  enterDelay?: number;
   onToggle: () => void;
   onSelect: () => void;
   onOpenTable: (info: NodeInfo) => void;
 }
+
+/** Width of the placeholder lines, varied per row so a column of them does not look like a barcode. */
+const PH_W = ["w-24", "w-32", "w-20", "w-28", "w-36"] as const;
+const PH_V = ["w-40", "w-28", "w-48", "w-32", "w-24"] as const;
 
 /** Presentational row (no data fetching): memoised on primitive props. */
 export const NodeRow = memo(function NodeRow({
@@ -33,11 +37,14 @@ export const NodeRow = memo(function NodeRow({
   focused,
   loadingChildren,
   showOffsets,
+  enterDelay,
   onToggle,
   onSelect,
   onOpenTable,
 }: PresentationProps) {
   const expandable = !!info && info.childCount > 0;
+  const dim = !!info?.zero && !selected;
+  const seed = info ? 0 : depth;
   return (
     <div
       role="treeitem"
@@ -45,19 +52,22 @@ export const NodeRow = memo(function NodeRow({
       aria-selected={selected}
       aria-expanded={expandable ? expanded : undefined}
       data-node-id={info?.id}
+      data-placeholder={info ? undefined : ""}
+      data-kbd-focus={focused ? "" : undefined}
       onClick={onSelect}
       onDoubleClick={expandable ? onToggle : undefined}
+      style={{ "--depth": depth, ...(enterDelay !== undefined ? { animationDelay: `${enterDelay}ms` } : {}) } as React.CSSProperties}
       className={cn(
-        "tree-cols group relative h-full cursor-default items-center border-b border-transparent px-2 text-[0.92rem]",
-        "hover:bg-accent/40",
-        selected && "bg-accent text-accent-foreground hover:bg-accent",
-        focused && "outline-1 -outline-offset-1 outline-ring/70",
+        "tree-cols indent-guides group/row relative h-full cursor-default items-center px-3 text-data",
+        "shadow-[inset_0_-1px_0_color-mix(in_oklab,var(--line)_55%,transparent)] hover:bg-hover",
+        selected && "bg-sel shadow-[inset_2px_0_0_var(--sel-edge),inset_0_-1px_0_color-mix(in_oklab,var(--line)_55%,transparent)] hover:bg-sel",
+        focused && "outline-0 -outline-offset-2 outline-ring group-focus-visible/tree:outline-2",
         info && !info.inFile && "opacity-60",
-        info?.zero && !selected && "text-muted-foreground",
+        enterDelay !== undefined && "animate-in fade-in-0 slide-in-from-top-1 duration-200 fill-mode-backwards",
       )}
     >
       {/* name */}
-      <div className="flex min-w-0 items-center" style={{ paddingLeft: depth * INDENT }}>
+      <div className="relative flex min-w-0 items-center" style={{ paddingLeft: `calc(var(--depth) * var(--indent))` }}>
         <button
           type="button"
           tabIndex={-1}
@@ -66,20 +76,26 @@ export const NodeRow = memo(function NodeRow({
             e.stopPropagation();
             onToggle();
           }}
-          className={cn("mr-0.5 flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-foreground/10", !expandable && "pointer-events-none opacity-0")}
+          className={cn("mr-1 flex size-5 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-foreground/10 hover:text-fg", !expandable && "pointer-events-none opacity-0")}
         >
-          <ChevronRightIcon className={cn("size-3.5 transition-transform duration-150", expanded && "rotate-90", loadingChildren && "animate-pulse")} />
+          <motion.span initial={false} animate={{ rotate: expanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 520, damping: 34 }} className={cn("flex", loadingChildren && "animate-pulse")}>
+            <ChevronRightIcon className="size-4" />
+          </motion.span>
         </button>
         {info ? (
           <>
-            <NodeIcon kind={info.kind} className="mr-1.5" />
-            <span className={cn("truncate font-mono font-medium", info.zero && "font-normal")} title={info.label}>
+            <NodeIcon kind={info.kind} value={info.value} zero={info.zero} className="mr-2" />
+            <span className={cn("truncate font-mono text-mono", dim ? "font-normal text-fg-subtle" : "font-medium text-fg")} title={info.label}>
               {info.label}
             </span>
-            {info.bit && <span className="ml-1.5 shrink-0 rounded bg-muted px-1 font-mono text-[0.75em] text-muted-foreground">bit {info.bit.offset}:{info.bit.width}</span>}
+            {info.bit && (
+              <span className="chip ml-2 shrink-0 rounded-md px-1.5 font-mono text-meta text-fg-muted">
+                bit {info.bit.offset}:{info.bit.width}
+              </span>
+            )}
           </>
         ) : (
-          <span className="skeleton-line ml-5 h-3 w-24" />
+          <span className={cn("ph ml-6 h-3", PH_W[seed % PH_W.length])} />
         )}
       </div>
       {/* value */}
@@ -89,13 +105,13 @@ export const NodeRow = memo(function NodeRow({
             {info.value ? (
               <Value value={info.value} identity={`${info.id}`} />
             ) : (
-              <span className="truncate text-muted-foreground">{info.preview ?? ""}</span>
+              <span className={cn("truncate", dim ? "text-fg-subtle" : "text-fg-muted")}>{info.preview ?? ""}</span>
             )}
-            {info.container && !info.value && <ContainerBar stats={info.container} className="ml-auto shrink-0" />}
-            {!info.inFile && <span className="shrink-0 rounded bg-warn/15 px-1 text-[0.75em] text-warn">beyond EOF</span>}
+            {info.container && !info.value && <ContainerBar stats={info.container} kind={info.kind} className="ml-auto shrink-0" />}
+            {!info.inFile && <span className="chip shrink-0 rounded-md px-1.5 text-meta text-warn">beyond EOF</span>}
           </>
         ) : (
-          <span className="skeleton-line h-3 w-40" />
+          <span className={cn("ph h-3", PH_V[seed % PH_V.length])} />
         )}
         {info?.tabular && (
           <button
@@ -107,20 +123,20 @@ export const NodeRow = memo(function NodeRow({
               e.stopPropagation();
               onOpenTable(info);
             }}
-            className="ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100"
+            className="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-muted opacity-0 group-hover/row:opacity-100 hover:bg-foreground/10 hover:text-fg focus-visible:opacity-100"
           >
-            <TableIcon className="size-3.5" />
+            <TableIcon className="size-4" />
           </button>
         )}
       </div>
       {/* type / offset / size, shown by container width */}
-      <div className="col-type truncate font-mono text-[0.85em] text-muted-foreground" title={info?.typeName}>
+      <div className="col-type truncate font-mono text-meta text-fg-muted" title={info?.typeName}>
         {info?.typeName ?? ""}
       </div>
-      <div className="col-off text-right font-mono text-[0.85em] text-muted-foreground tabular" title={info ? `offset ${info.offset}` : undefined}>
+      <div className="col-off text-right font-mono text-meta text-fg-subtle tabular" title={info ? `offset ${info.offset}` : undefined}>
         {showOffsets && info ? fmtHexOffset(info.offset) : ""}
       </div>
-      <div className="col-size text-right font-mono text-[0.85em] text-muted-foreground tabular" title={info ? `${info.size} bytes` : undefined}>
+      <div className="col-size text-right font-mono text-meta text-fg-subtle tabular" title={info ? `${info.size} bytes` : undefined}>
         {info ? fmtBytes(info.size).replace(" B", "") : ""}
       </div>
     </div>
@@ -139,7 +155,7 @@ interface RowProps {
   loadingChildren: boolean;
   hideEmpty: boolean;
   showOffsets: boolean;
-  fetchEnabled: boolean;
+  enterDelay?: number;
   rowIndex: number;
   onToggle: (rowIndex: number, info: NodeInfo) => void;
   onSelect: (rowIndex: number, info: NodeInfo) => void;
@@ -150,7 +166,8 @@ interface RowProps {
 export const TreeRow = memo(function TreeRow(p: RowProps) {
   const page = Math.floor(p.childIndex / CHILD_PAGE);
   const isRoot = p.parentId === null;
-  const children = useChildrenPage(p.contract, p.parentId ?? "", p.view, p.hideEmpty, page, !isRoot && p.fetchEnabled);
+  // Read-only: the page loader of the explorer fetches; loaded rows are never dropped while the user scrolls.
+  const children = useChildrenPage(p.contract, p.parentId ?? "", p.view, p.hideEmpty, page, false, !isRoot);
   const root = useNode(p.contract, isRoot ? "" : null);
   const info: NodeInfo | undefined = isRoot ? root.data : children.data?.items[p.childIndex - children.data.offset];
   return (
@@ -162,10 +179,10 @@ export const TreeRow = memo(function TreeRow(p: RowProps) {
       focused={p.focused}
       loadingChildren={p.loadingChildren}
       showOffsets={p.showOffsets}
+      enterDelay={p.enterDelay}
       onToggle={() => info && p.onToggle(p.rowIndex, info)}
       onSelect={() => info && p.onSelect(p.rowIndex, info)}
       onOpenTable={p.onOpenTable}
     />
   );
 });
-

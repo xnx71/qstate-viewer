@@ -1,5 +1,7 @@
 import { FilterIcon, PlusIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useAtomValue } from "jotai";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { filterRequestAtom } from "@/store/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -17,7 +19,7 @@ const PLACEHOLDER: Partial<Record<TableColumn["kind"], string>> = {
   datetime: "2024-01-31 12:00:00",
 };
 
-function AddFilter({ columns, onAdd }: { columns: TableColumn[]; onAdd: (f: FilterSpec) => void }) {
+function AddFilter({ columns, onAdd, tableKey }: { columns: TableColumn[]; onAdd: (f: FilterSpec) => void; tableKey: string }) {
   const filterable = useMemo(() => columns.filter((c) => c.filterable), [columns]);
   const [open, setOpen] = useState(false);
   const [colId, setColId] = useState<string>(filterable[0]?.id ?? "");
@@ -27,6 +29,19 @@ function AddFilter({ columns, onAdd }: { columns: TableColumn[]; onAdd: (f: Filt
   const effectiveOp = ops.includes(op) ? op : (ops[0] ?? "eq");
   const [value, setValue] = useState("");
   const [touched, setTouched] = useState(false);
+  const request = useAtomValue(filterRequestAtom);
+  const lastNonce = useRef(0);
+  // "Filter column…" from a context menu: open with that column preselected
+  useEffect(() => {
+    if (!request || request.key !== tableKey || request.nonce === lastNonce.current) return;
+    lastNonce.current = request.nonce;
+    if (filterable.some((c) => c.id === request.column)) {
+      setColId(request.column);
+      setValue("");
+      setTouched(false);
+      setOpen(true);
+    }
+  }, [request, tableKey, filterable]);
   const error = col ? validateFilterValue(col.kind, effectiveOp, value) : "No filterable column";
 
   const submit = () => {
@@ -50,7 +65,7 @@ function AddFilter({ columns, onAdd }: { columns: TableColumn[]; onAdd: (f: Filt
       />
       <PopoverContent align="start" className="w-80">
         <div className="space-y-2" onKeyDown={(e) => e.key === "Enter" && submit()}>
-          <div className="text-[0.8rem] font-medium text-muted-foreground uppercase">Add filter</div>
+          <div className="text-meta font-medium text-fg-muted uppercase">Add filter</div>
           <Select
             value={col?.id ?? ""}
             items={filterable.map((c) => ({ value: c.id, label: c.label }))}
@@ -62,7 +77,7 @@ function AddFilter({ columns, onAdd }: { columns: TableColumn[]; onAdd: (f: Filt
             <SelectContent>
               {filterable.map((c) => (
                 <SelectItem key={c.id} value={c.id}>
-                  {c.label} <span className="text-muted-foreground">{c.kind}</span>
+                  {c.label} <span className="text-fg-muted">{c.kind}</span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -92,9 +107,9 @@ function AddFilter({ columns, onAdd }: { columns: TableColumn[]; onAdd: (f: Filt
                 placeholder={col ? (PLACEHOLDER[col.kind] ?? "value") : ""}
                 aria-label="Filter value"
                 aria-invalid={touched && !!error}
-                className="h-7 font-mono"
+                className="h-9 font-mono"
               />
-              {touched && error && <p className="mt-1 text-[0.8rem] text-destructive">{error}</p>}
+              {touched && error && <p className="mt-1 text-meta text-danger">{error}</p>}
             </div>
           )}
           <div className="flex justify-end gap-1.5 pt-1">
@@ -112,33 +127,34 @@ function AddFilter({ columns, onAdd }: { columns: TableColumn[]; onAdd: (f: Filt
 }
 
 interface Props {
+  tableKey: string;
   columns: TableColumn[];
   filters: FilterSpec[];
   onChange: (filters: FilterSpec[]) => void;
 }
 
-export function FilterBar({ columns, filters, onChange }: Props) {
+export function FilterBar({ tableKey, columns, filters, onChange }: Props) {
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Filters">
-      <FilterIcon className="size-3.5 text-muted-foreground" aria-hidden />
+      <FilterIcon className="size-4 text-fg-muted" aria-hidden />
       {filters.map((f, i) => (
         <span
           key={`${f.column}:${f.op}:${f.value ?? ""}:${i}`}
           data-testid="filter-chip"
-          className="inline-flex max-w-[28rem] items-center gap-1 rounded-md bg-primary/12 py-0.5 pr-0.5 pl-2 font-mono text-[0.85rem] text-primary"
+          className="inline-flex max-w-[28rem] items-center gap-1 chip rounded-md py-0.5 pr-0.5 pl-2 font-mono text-meta text-brand-text"
         >
           <span className="truncate">{describeFilter(f, columns)}</span>
           <button
             type="button"
             aria-label={`Remove filter ${describeFilter(f, columns)}`}
-            className="rounded p-0.5 hover:bg-primary/20"
+            className="rounded p-0.5 hover:bg-foreground/10"
             onClick={() => onChange(filters.filter((_, j) => j !== i))}
           >
-            <XIcon className="size-3" />
+            <XIcon className="size-3.5" />
           </button>
         </span>
       ))}
-      <AddFilter columns={columns} onAdd={(f) => onChange([...filters, f])} />
+      <AddFilter tableKey={tableKey} columns={columns} onAdd={(f) => onChange([...filters, f])} />
       {filters.length > 0 && (
         <Button variant="ghost" size="xs" onClick={() => onChange([])}>
           Clear

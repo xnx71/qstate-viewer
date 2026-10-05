@@ -196,3 +196,50 @@ export function valueSig(v: CellValue | undefined): string {
       return "n/a";
   }
 }
+
+/** Identity split into its 56 letter body and the 4 letter checksum tail. */
+export function splitIdentity(identity: string): { body: string; tail: string } {
+  if (identity.length <= 4) return { body: "", tail: identity };
+  return { body: identity.slice(0, -4), tail: identity.slice(-4) };
+}
+
+/** "YYYY-MM-DD HH:MM:SS[.mmm]" (UTC) -> epoch ms; null when the text is not a date ("unset", ...). */
+export function parseDateText(text: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/.exec(text);
+  if (!m) return null;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]), Number(m[7] ?? 0));
+  return Number.isFinite(t) ? t : null;
+}
+
+/** "in 3 days", "5 months ago": coarse relative time for the inspector. */
+export function fmtRelative(thenMs: number, nowMs = Date.now()): string {
+  const diff = thenMs - nowMs;
+  const abs = Math.abs(diff) / 1000;
+  const units: [number, string][] = [
+    [31536000, "year"],
+    [2592000, "month"],
+    [86400, "day"],
+    [3600, "hour"],
+    [60, "minute"],
+  ];
+  if (abs < 45) return "just now";
+  for (const [secs, name] of units) {
+    if (abs >= secs * 0.9 || name === "minute") {
+      const n = Math.max(1, Math.round(abs / secs));
+      const label = `${n} ${name}${n === 1 ? "" : "s"}`;
+      return diff < 0 ? `${label} ago` : `in ${label}`;
+    }
+  }
+  return "";
+}
+
+/** Decimal digits of an integer string, grouped, plus its unsigned/hex companions for copy menus. */
+export function hexOfDecimal(decimal: string, bits: number, unsigned: boolean): string | null {
+  try {
+    let v = BigInt(decimal);
+    if (!unsigned && v < 0n) v += 1n << BigInt(bits);
+    return `0x${v.toString(16).padStart(Math.max(1, bits / 4), "0")}`;
+  } catch {
+    return null;
+  }
+}

@@ -34,11 +34,11 @@ export function RefRow({ selected, match, onPick, children }: RowProps) {
       data-match={match ? "" : undefined}
       onClick={onPick}
       className={cn(
-        "flex w-full items-center gap-2 border-l-2 px-2 py-[3px] text-left text-[0.88rem] outline-none focus-visible:bg-accent",
-        selected ? "border-primary bg-primary/20 text-foreground" : match ? "border-ok/70 bg-ok/8 hover:bg-accent" : "border-transparent hover:bg-muted",
+        "flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-data outline-none focus-visible:bg-accent",
+        selected ? "border-primary bg-sel text-foreground" : match ? "border-ok/70 bg-ok/8 hover:bg-hover" : "border-transparent hover:bg-hover",
       )}
     >
-      <span className="flex size-3.5 shrink-0 items-center justify-center text-primary">{selected && <CheckIcon className="size-3.5" />}</span>
+      <span className="flex size-4 shrink-0 items-center justify-center text-brand-text">{selected && <CheckIcon className="size-4" />}</span>
       {children}
     </button>
   );
@@ -46,7 +46,7 @@ export function RefRow({ selected, match, onPick, children }: RowProps) {
 
 function EpochBadge({ epoch, match }: { epoch: number | undefined; match?: boolean }) {
   if (epoch === undefined) return null;
-  return <span className={cn("shrink-0 rounded px-1 font-mono text-[0.75rem] tabular", match ? "bg-ok/20 text-ok" : "bg-muted text-muted-foreground")}>epoch {epoch}</span>;
+  return <span className={cn("shrink-0 rounded px-1 font-mono text-meta tabular", match ? "bg-ok/20 text-ok" : "bg-muted text-fg-muted")}>epoch {epoch}</span>;
 }
 
 /** Tag or branch row: name, version, epoch, date. */
@@ -56,11 +56,11 @@ export function VersionRow({ v, selected, matchEpoch, onPick, mark }: { v: CoreV
     <RefRow selected={selected} match={match} onPick={onPick}>
       <span className="min-w-0 flex-1 truncate font-mono">
         {v.ref}
-        {mark && <span className="ml-1.5 rounded bg-primary/15 px-1 text-[0.72rem] text-primary">{mark}</span>}
+        {mark && <span className="ml-1.5 chip rounded-md px-1.5 text-meta text-brand-text">{mark}</span>}
       </span>
-      {v.version && v.version !== v.ref.replace(/^v/, "") && <span className="shrink-0 font-mono text-[0.78rem] text-muted-foreground">v{v.version}</span>}
+      {v.version && v.version !== v.ref.replace(/^v/, "") && <span className="shrink-0 font-mono text-meta text-fg-muted">v{v.version}</span>}
       <EpochBadge epoch={v.epoch} match={match} />
-      <span className="w-[5.4rem] shrink-0 whitespace-nowrap text-right font-mono text-[0.78rem] text-muted-foreground tabular">{fmtDate(v.date)}</span>
+      <span className="w-[5.4rem] shrink-0 whitespace-nowrap text-right font-mono text-meta text-fg-muted tabular">{fmtDate(v.date)}</span>
     </RefRow>
   );
 }
@@ -68,11 +68,11 @@ export function VersionRow({ v, selected, matchEpoch, onPick, mark }: { v: CoreV
 export function CommitRow({ c, selected, onPick }: { c: CoreVersion; selected: boolean; onPick: () => void }) {
   return (
     <RefRow selected={selected} onPick={onPick}>
-      <span className="shrink-0 font-mono text-[0.8rem] text-primary">{shortSha(c.sha)}</span>
+      <span className="shrink-0 font-mono text-meta text-brand-text">{shortSha(c.sha)}</span>
       <span className="min-w-0 flex-1 truncate" title={c.subject}>
         {c.subject}
       </span>
-      <span className="w-[5.4rem] shrink-0 whitespace-nowrap text-right font-mono text-[0.78rem] text-muted-foreground tabular">{fmtDate(c.date)}</span>
+      <span className="w-[5.4rem] shrink-0 whitespace-nowrap text-right font-mono text-meta text-fg-muted tabular">{fmtDate(c.date)}</span>
     </RefRow>
   );
 }

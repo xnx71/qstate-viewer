@@ -1,0 +1,213 @@
+/*
+ * Design tokens: the ONE place for colour, type scale, sizes, radii, shadows and motion.
+ * Components use the Tailwind utilities generated from theme.css, never ad-hoc values.
+ *
+ * Colour: oklch, cool blue-violet neutrals (hue 275). Dark is the default theme (`.dark` on <html>); `:root` is light.
+ * Every text / UI pair below is checked against WCAG AA by src/styles/contrast.test.ts (>= 4.5:1 text, >= 3:1 UI):
+ * tested colours are opaque oklch() literals, tints are `color-mix(in oklab, <colour> var(--tint), <surface>)`.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- surfaces (light): soft off-white, clear layering ---------------------------------------------------- */
+  --canvas: oklch(0.935 0.009 275); /* app chrome: top bar, status bar, gaps between panels */
+  --sidebar-bg: oklch(0.952 0.008 275);
+  --surface-1: oklch(0.975 0.005 275); /* main panels: tree, table */
+  --surface-2: oklch(0.992 0.003 275); /* raised: inspector sections, table header, cards */
+  --surface-3: oklch(0.925 0.012 275); /* controls, chips, pressed */
+  --overlay: oklch(0.997 0.002 275); /* popovers, dialogs, menus */
+  --hover: oklch(0.955 0.014 275);
+  --sel: oklch(0.93 0.045 275);
+  --sel-edge: oklch(0.52 0.19 275);
+  --line: oklch(0.885 0.011 275);
+  --line-strong: oklch(0.8 0.016 275);
+  --line-input: oklch(0.6 0.03 275); /* borders that carry meaning (inputs): >= 3:1 */
+  --backdrop: oklch(0.25 0.03 275 / 0.35);
+
+  /* ---- text ------------------------------------------------------------------------------------------------ */
+  --fg: oklch(0.21 0.025 275);
+  --fg-muted: oklch(0.43 0.03 275);
+  --fg-subtle: oklch(0.5 0.03 275); /* dimmed but readable: zero values, offsets */
+
+  /* ---- brand accent ---------------------------------------------------------------------------------------- */
+  --brand: oklch(0.5 0.21 275); /* solid fills: primary buttons, active tab bar */
+  --brand-fg: oklch(0.99 0.004 275);
+  --brand-hover: oklch(0.45 0.21 275);
+  --brand-text: oklch(0.46 0.2 275); /* accent used as text / icon */
+  --ring: oklch(0.52 0.19 275);
+
+  /* ---- semantic -------------------------------------------------------------------------------------------- */
+  --ok: oklch(0.43 0.13 155);
+  --warn: oklch(0.45 0.11 70);
+  --danger: oklch(0.48 0.19 25);
+  --info: oklch(0.45 0.13 235);
+
+  /* ---- value types (syntax palette) ----------------------------------------------------------------------- */
+  --t-int: oklch(0.45 0.14 245);
+  --t-big: oklch(0.44 0.17 275);
+  --t-id: oklch(0.45 0.19 320);
+  --t-asset: oklch(0.45 0.11 65);
+  --t-bool: oklch(0.43 0.13 150);
+  --t-enum: oklch(0.47 0.17 355);
+  --t-date: oklch(0.44 0.09 195);
+  --t-bytes: oklch(0.42 0.05 255);
+  --t-ptr: oklch(0.47 0.15 45);
+  --t-null: var(--fg-subtle);
+
+  /* ---- container kinds ------------------------------------------------------------------------------------ */
+  --k-struct: oklch(0.45 0.13 250);
+  --k-union: oklch(0.46 0.15 50);
+  --k-array: oklch(0.43 0.12 165);
+  --k-bitArray: oklch(0.44 0.09 195);
+  --k-hashMap: oklch(0.45 0.18 295);
+  --k-hashSet: oklch(0.47 0.19 330);
+  --k-collection: oklch(0.46 0.11 85);
+  --k-linkedList: oklch(0.43 0.1 220);
+  --k-entry: oklch(0.45 0.12 285);
+  --k-pov: oklch(0.48 0.17 10);
+
+  /* ---- contract status ------------------------------------------------------------------------------------ */
+  --s-ok: var(--ok);
+  --s-size: var(--warn);
+  --s-missing: var(--fg-subtle);
+  --s-schema: var(--danger);
+
+  --flash: oklch(0.8 0.15 85 / 0.55);
+  --tint: 14%; /* strength of coloured chips over a surface */
+
+  /* ---- shadows / elevation -------------------------------------------------------------------------------- */
+  --shadow-1: 0 1px 2px oklch(0.3 0.04 275 / 0.08), 0 1px 1px oklch(0.3 0.04 275 / 0.05);
+  --shadow-2: 0 4px 12px -2px oklch(0.3 0.04 275 / 0.14), 0 1px 3px oklch(0.3 0.04 275 / 0.08);
+  --shadow-pop: 0 14px 38px -8px oklch(0.25 0.05 275 / 0.28), 0 4px 12px -4px oklch(0.25 0.05 275 / 0.16);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --canvas: oklch(0.15 0.015 275);
+  --sidebar-bg: oklch(0.175 0.016 275);
+  --surface-1: oklch(0.205 0.017 275);
+  --surface-2: oklch(0.235 0.018 275);
+  --surface-3: oklch(0.29 0.02 275);
+  --overlay: oklch(0.255 0.02 275);
+  --hover: oklch(0.255 0.026 275);
+  --sel: oklch(0.32 0.075 275);
+  --sel-edge: oklch(0.72 0.16 275);
+  --line: oklch(0.3 0.02 275);
+  --line-strong: oklch(0.38 0.024 275);
+  --line-input: oklch(0.55 0.04 275);
+  --backdrop: oklch(0.08 0.02 275 / 0.6);
+
+  --fg: oklch(0.95 0.008 275);
+  --fg-muted: oklch(0.76 0.02 275);
+  --fg-subtle: oklch(0.66 0.025 275);
+
+  --brand: oklch(0.56 0.21 275);
+  --brand-fg: oklch(0.99 0.004 275);
+  --brand-hover: oklch(0.61 0.21 275);
+  --brand-text: oklch(0.79 0.12 275);
+  --ring: oklch(0.7 0.16 275);
+
+  --ok: oklch(0.79 0.15 155);
+  --warn: oklch(0.82 0.14 80);
+  --danger: oklch(0.8 0.15 22);
+  --info: oklch(0.79 0.11 235);
+
+  --t-int: oklch(0.8 0.11 240);
+  --t-big: oklch(0.79 0.13 270);
+  --t-id: oklch(0.8 0.13 320);
+  --t-asset: oklch(0.83 0.12 78);
+  --t-bool: oklch(0.8 0.15 150);
+  --t-enum: oklch(0.8 0.12 355);
+  --t-date: oklch(0.81 0.09 190);
+  --t-bytes: oklch(0.76 0.035 255);
+  --t-ptr: oklch(0.78 0.13 45);
+
+  --k-struct: oklch(0.79 0.11 250);
+  --k-union: oklch(0.79 0.13 55);
+  --k-array: oklch(0.8 0.13 165);
+  --k-bitArray: oklch(0.8 0.09 195);
+  --k-hashMap: oklch(0.78 0.13 295);
+  --k-hashSet: oklch(0.79 0.15 330);
+  --k-collection: oklch(0.83 0.12 90);
+  --k-linkedList: oklch(0.8 0.09 220);
+  --k-entry: oklch(0.77 0.1 285);
+  --k-pov: oklch(0.78 0.13 10);
+
+  --flash: oklch(0.82 0.15 85 / 0.38);
+
+  --shadow-1: 0 1px 2px oklch(0 0 0 / 0.35);
+  --shadow-2: 0 6px 16px -4px oklch(0 0 0 / 0.5), 0 1px 3px oklch(0 0 0 / 0.4);
+  --shadow-pop: 0 18px 44px -8px oklch(0 0 0 / 0.65), 0 6px 14px -6px oklch(0 0 0 / 0.5), 0 0 0 1px oklch(1 0 0 / 0.06);
+}
+
+:root {
+  /* ---- UI size: Compact / Comfortable / Large scale the whole rem-based UI through one variable ---------- */
+  --ui-scale: 1;
+
+  /* ---- type scale (rem at scale 1; html font-size = 16px * --ui-scale) ----------------------------------- */
+  --fs-title: 1.0625rem; /* 17px: dialog / panel titles */
+  --fs-ui: 0.9375rem; /* 15px: base UI text, inputs, buttons */
+  --fs-data: 0.875rem; /* 14px: dense data rows (tree, table, lists) */
+  --fs-mono: 0.84375rem; /* 13.5px: monospace data */
+  --fs-meta: 0.8125rem; /* 13px: secondary text, badges, status bar, hex view */
+  --fs-hex: 0.8125rem; /* 13px: hex dump */
+
+  --font-ui: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Ubuntu, Cantarell, sans-serif;
+  --font-data: "JetBrains Mono Variable", ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* ---- shape ---------------------------------------------------------------------------------------------- */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-xl: 12px;
+  --radius: 0.5rem;
+
+  /* ---- motion --------------------------------------------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+}
+
+html[data-ui-size="compact"] {
+  --ui-scale: 0.94;
+}
+html[data-ui-size="large"] {
+  --ui-scale: 1.12;
+}
+
+/* ---- shadcn / Base UI names -> design tokens ----------------------------------------------------------------- */
+:root {
+  --background: var(--surface-1);
+  --foreground: var(--fg);
+  --card: var(--surface-2);
+  --card-foreground: var(--fg);
+  --popover: var(--overlay);
+  --popover-foreground: var(--fg);
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-fg);
+  --secondary: var(--surface-3);
+  --secondary-foreground: var(--fg);
+  --muted: var(--surface-3);
+  --muted-foreground: var(--fg-muted);
+  --accent: var(--hover);
+  --accent-foreground: var(--fg);
+  --destructive: var(--danger);
+  --border: var(--line);
+  --input: var(--line-input);
+  --chart-1: var(--t-int);
+  --chart-2: var(--t-bool);
+  --chart-3: var(--t-asset);
+  --chart-4: var(--t-id);
+  --chart-5: var(--danger);
+  --sidebar: var(--sidebar-bg);
+  --sidebar-foreground: var(--fg);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-fg);
+  --sidebar-accent: var(--sel);
+  --sidebar-accent-foreground: var(--fg);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--ring);
+}

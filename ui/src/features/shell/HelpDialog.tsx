@@ -61,8 +61,8 @@ export function HelpDialog() {
         <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
           {GROUPS.map((g) => (
             <section key={g.title}>
-              <h3 className="mb-1.5 text-[0.75rem] font-semibold tracking-wider text-muted-foreground uppercase">{g.title}</h3>
-              <ul className="space-y-1">
+              <h3 className="mb-2 text-meta font-semibold tracking-wider text-fg-muted uppercase">{g.title}</h3>
+              <ul className="space-y-1.5">
                 {g.items.map((it) => (
                   <li key={it.text} className="flex items-center justify-between gap-3">
                     <span>{it.text}</span>

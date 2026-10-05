@@ -77,39 +77,39 @@ export function TypeTab({ typeId }: { typeId: TypeId }) {
       </Section>
       {t.bases && t.bases.length > 0 && (
         <Section title="Base classes">
-          <ul className="space-y-0.5 font-mono text-[0.9rem]">
+          <ul className="space-y-1 font-mono text-mono">
             {t.bases.map((b) => (
               <li key={`${b.type}:${b.offset}`}>
-                {b.typeName} <span className="text-muted-foreground">@ +{b.offset}</span>
+                {b.typeName} <span className="text-fg-muted">@ +{b.offset}</span>
               </li>
             ))}
           </ul>
         </Section>
       )}
       {t.fields && t.fields.length > 0 && (
-        <Section title={`Fields (${t.fields.length})`} className="px-0">
+        <Section title={`Fields (${t.fields.length})`} bleed>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[22rem] text-left font-mono text-[0.85rem]">
-              <thead className="text-[0.72rem] text-muted-foreground uppercase">
+            <table className="w-full min-w-[24rem] text-left font-mono text-mono">
+              <thead className="text-meta tracking-wide text-fg-muted uppercase">
                 <tr>
-                  <th className="px-3 py-1 font-medium">Name</th>
-                  <th className="px-2 py-1 font-medium">Type</th>
-                  <th className="px-2 py-1 text-right font-medium">Offset</th>
-                  <th className="px-3 py-1 text-right font-medium">Size</th>
+                  <th className="px-4 py-1.5 font-medium">Name</th>
+                  <th className="px-2 py-1.5 font-medium">Type</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Offset</th>
+                  <th className="px-4 py-1.5 text-right font-medium">Size</th>
                 </tr>
               </thead>
               <tbody>
                 {t.fields.map((f) => (
-                  <tr key={`${f.name}:${f.offset}:${f.bitOffset ?? ""}`} className="border-t border-border/50 hover:bg-accent/30">
-                    <td className="px-3 py-1 font-semibold">
+                  <tr key={`${f.name}:${f.offset}:${f.bitOffset ?? ""}`} className="border-t border-line hover:bg-hover">
+                    <td className="px-4 py-1.5 font-semibold">
                       {f.name}
-                      {f.bitWidth !== undefined && <span className="ml-1 font-normal text-muted-foreground">:{f.bitWidth}</span>}
+                      {f.bitWidth !== undefined && <span className="ml-1 font-normal text-fg-muted">:{f.bitWidth}</span>}
                     </td>
-                    <td className="max-w-[12rem] truncate px-2 py-1 text-muted-foreground" title={f.typeName}>
+                    <td className="max-w-[12rem] truncate px-2 py-1.5 text-fg-muted" title={f.typeName}>
                       {f.typeName}
                     </td>
-                    <td className="px-2 py-1 text-right tabular">+{f.offset}</td>
-                    <td className="px-3 py-1 text-right tabular">{f.size}</td>
+                    <td className="px-2 py-1.5 text-right tabular">+{f.offset}</td>
+                    <td className="px-4 py-1.5 text-right tabular">{f.size}</td>
                   </tr>
                 ))}
               </tbody>
@@ -119,11 +119,11 @@ export function TypeTab({ typeId }: { typeId: TypeId }) {
       )}
       {t.enumerators && t.enumerators.length > 0 && (
         <Section title={`Enumerators (${t.enumerators.length})`}>
-          <ul className="space-y-0.5 font-mono text-[0.9rem]">
+          <ul className="space-y-1 font-mono text-mono">
             {t.enumerators.map((e) => (
               <li key={e.name} className="flex justify-between gap-3">
-                <span className="text-v-enum">{e.name}</span>
-                <span className="text-muted-foreground tabular">{e.value}</span>
+                <span className="text-t-enum">{e.name}</span>
+                <span className="text-fg-muted tabular">{e.value}</span>
               </li>
             ))}
           </ul>

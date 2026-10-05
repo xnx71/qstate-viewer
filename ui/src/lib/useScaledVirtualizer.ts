@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { directionOf, type ScrollDir } from "./pageWindow";
 import { computeScale, itemY, logicalToScrollTop, offsetForRow, rowWindow, type ScaleInfo } from "./scaledVirtual";
 
 export interface ScaledRow {
@@ -12,6 +13,8 @@ export interface ScaledVirtual {
   scrollHeight: number;
   scale: ScaleInfo;
   isScrolling: boolean;
+  /** Direction of the last scroll movement (0 = none yet). */
+  direction: ScrollDir;
   scrollToRow: (index: number, align?: "start" | "center" | "auto") => void;
   /** First / last rendered row (without overscan). */
   visible: { start: number; end: number };
@@ -38,7 +41,7 @@ export function useScaledVirtualizer({ count, rowHeight, scrollRef, overscan = 8
   const scale = computeScale(count, rowHeight, viewH);
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
-  const [view, setView] = useState({ offset: 0, scrolling: false });
+  const [view, setView] = useState<{ offset: number; scrolling: boolean; dir: ScrollDir }>({ offset: 0, scrolling: false, dir: 0 });
   // The scroll element may mount after this hook first runs (e.g. a table that renders once its schema arrived).
   const [el, setEl] = useState<HTMLDivElement | null>(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately every render: cheap, and a ref has no change signal
@@ -51,7 +54,7 @@ export function useScaledVirtualizer({ count, rowHeight, scrollRef, overscan = 8
     let timer: ReturnType<typeof setTimeout> | undefined;
     const report = (scrolling: boolean) => {
       const offset = el.scrollTop * scaleRef.current.ratio;
-      setView((v) => (v.offset === offset && v.scrolling === scrolling ? v : { offset, scrolling }));
+      setView((v) => (v.offset === offset && v.scrolling === scrolling ? v : { offset, scrolling, dir: offset === v.offset ? v.dir : directionOf(v.offset, offset) }));
     };
     const onScroll = () => {
       report(true);
@@ -103,6 +106,7 @@ export function useScaledVirtualizer({ count, rowHeight, scrollRef, overscan = 8
     scrollHeight: scale.scrollHeight,
     scale,
     isScrolling: view.scrolling,
+    direction: view.dir,
     scrollToRow,
     visible: { start: w.visibleStart, end: w.visibleEnd < w.visibleStart ? w.visibleStart : w.visibleEnd },
   };

@@ -27,7 +27,7 @@ export function CopyButton({ text, label = "Copy", className, toastMessage, size
       title={label}
       tabIndex={-1}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none",
+        "inline-flex shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none",
         px,
         className,
       )}
@@ -42,7 +42,7 @@ export function CopyButton({ text, label = "Copy", className, toastMessage, size
         } else toast.error("Copy failed");
       }}
     >
-      {done ? <CheckIcon className="size-3 text-ok" /> : <CopyIcon className="size-3" />}
+      {done ? <CheckIcon className="size-3.5 text-ok" /> : <CopyIcon className="size-3.5" />}
     </button>
   );
 }

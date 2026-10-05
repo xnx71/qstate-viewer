@@ -96,3 +96,24 @@ export async function openWorkspace(page) {
   await clickText(page, "Open workspace", "button");
   await waitFor(page, () => !document.querySelector("[role=dialog]") && !!document.querySelector("[role=option][data-contract]"), null, 30000, "workspace opened (dialog closed)");
 }
+
+/** Mock workspace (first run flow) opened and contract `index` selected, the tree showing. */
+export async function bootWorkspace(page, index = 1) {
+  await page.waitForSelector(REPO_INPUT, { timeout: 15000 });
+  await waitSynced(page);
+  await gotoFolder(page, "/home/mock/qubic/state", "contract0001.229");
+  await chooseFolder(page, 229);
+  await openWorkspace(page);
+  await page.evaluate((i) => document.querySelector(`[role=option][data-contract='${i}']`)?.click(), index);
+  await page.waitForSelector("[role=treeitem]", { timeout: 15000 });
+}
+
+/** Expand the first tree row whose text contains `name` and wait for children to appear. */
+export async function expandRow(page, name) {
+  const before = await page.$$eval("[role=treeitem]", (n) => n.length);
+  await page.evaluate((t) => {
+    const row = [...document.querySelectorAll("[role=treeitem]")].find((r) => r.textContent.includes(t));
+    row?.querySelector("[aria-label=Expand]")?.click();
+  }, name);
+  await waitFor(page, (n) => document.querySelectorAll("[role=treeitem]").length > n, before, 15000, `children of ${name}`);
+}

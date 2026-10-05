@@ -18,11 +18,11 @@ import { contractAtomFamily, workspaceIdAtom } from "./workspace";
 import { store } from "./store";
 
 export const nodeQ = createQueryFamily<NodeInfo>(800);
-export const childrenQ = createQueryFamily<ChildrenPage>(400);
+export const childrenQ = createQueryFamily<ChildrenPage>(800);
 export const typeQ = createQueryFamily<TypeInfo>(2000);
-export const bytesQ = createQueryFamily<BytesBlock>(300);
+export const bytesQ = createQueryFamily<BytesBlock>(600);
 export const tableInfoQ = createQueryFamily<TableInfo>(50);
-export const tablePageQ = createQueryFamily<TablePage>(400);
+export const tablePageQ = createQueryFamily<TablePage>(600);
 
 export interface BytesBlock {
   offset: number;
@@ -72,15 +72,12 @@ export function fetchChildren(
   page: number,
 ): Promise<ChildrenPage> {
   return childrenQ.fetch(childrenBase(contract, id, view, hideEmpty, page), currentVersion(contract), () =>
-    invoke("state.children", {
-      contract,
-      id,
-      view,
-      hideEmpty: hideEmpty || undefined,
-      offset: page * CHILD_PAGE,
-      limit: CHILD_PAGE,
-    }),
+    invoke("state.children", childrenParams(contract, id, view, hideEmpty, page)),
   );
+}
+
+function childrenParams(contract: number, id: NodeId, view: "logical" | "raw", hideEmpty: boolean, page: number) {
+  return { contract, id, view, hideEmpty: hideEmpty || undefined, offset: page * CHILD_PAGE, limit: CHILD_PAGE };
 }
 
 // ---- hooks -------------------------------------------------------------------
@@ -99,18 +96,18 @@ export function useChildrenPage(
   view: "logical" | "raw",
   hideEmpty: boolean,
   page: number,
-  enabled = true,
+  /** May this hook fetch a missing page? `false` = read-only (the page loader fetches); cached data is served either way. */
+  fetch = true,
+  /** `false` disables the hook entirely (rows that have no children page, e.g. the root row). */
+  active = true,
 ): QueryResult<ChildrenPage> {
   const version = useContractVersion(contract);
-  return useQuery(childrenQ, enabled ? childrenBase(contract, id, view, hideEmpty, page) : null, version, () =>
-    invoke("state.children", {
-      contract,
-      id,
-      view,
-      hideEmpty: hideEmpty || undefined,
-      offset: page * CHILD_PAGE,
-      limit: CHILD_PAGE,
-    }),
+  return useQuery(
+    childrenQ,
+    active ? childrenBase(contract, id, view, hideEmpty, page) : null,
+    version,
+    () => invoke("state.children", childrenParams(contract, id, view, hideEmpty, page)),
+    { fetch },
   );
 }
 

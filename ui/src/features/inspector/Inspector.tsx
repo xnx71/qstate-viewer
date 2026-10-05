@@ -1,4 +1,5 @@
 import { useAtomValue } from "jotai";
+import { motion } from "motion/react";
 import { InfoIcon, MousePointerClickIcon } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
 import { RpcErrorView } from "@/components/common/RpcErrorView";
@@ -38,8 +39,8 @@ function InspectorBody({ contract }: { contract: number }) {
       </EmptyState>
     );
   return (
-    <div className="flex h-full min-h-0 flex-col" aria-label="Inspector">
-      <div className="flex h-9 shrink-0 items-center border-b px-2">
+    <div className="flex h-full min-h-0 flex-col bg-surface-2" aria-label="Inspector">
+      <div className="flex h-11 shrink-0 items-center border-b px-3">
         <Breadcrumb contract={contract} path={sel.path} />
       </div>
       {node.error ? (
@@ -52,13 +53,15 @@ function InspectorBody({ contract }: { contract: number }) {
         </div>
       ) : (
         <Tabs value={prefs.inspectorTab} onValueChange={(v) => updatePrefs({ inspectorTab: v as "overview" | "type" | "bytes" })} className="min-h-0 flex-1 gap-0">
-          <TabsList variant="line" className="h-8 w-full justify-start border-b px-2">
+          <TabsList variant="line" className="h-10 w-full justify-start gap-2 border-b px-3">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="type">Type</TabsTrigger>
             <TabsTrigger value="bytes">Bytes</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="min-h-0 flex-1 overflow-y-auto">
-            <OverviewTab contract={contract} node={node.data} selectionPath={sel.path} />
+            <motion.div key={node.data.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16, ease: "easeOut" }}>
+              <OverviewTab contract={contract} node={node.data} selectionPath={sel.path} />
+            </motion.div>
           </TabsContent>
           <TabsContent value="type" className="min-h-0 flex-1 overflow-y-auto">
             <TypeTab typeId={node.data.typeId} />

@@ -26,3 +26,15 @@ describe("parsePrefs", () => {
     expect(DEFAULT_PREFS.layout).toEqual({});
   });
 });
+
+describe("UI size setting", () => {
+  it("defaults to comfortable and survives a round trip through settings.ui", () => {
+    expect(DEFAULT_PREFS.uiSize).toBe("comfortable");
+    expect(parsePrefs({ uiSize: "large" }).uiSize).toBe("large");
+    expect(parsePrefs({ uiSize: "compact" }).uiSize).toBe("compact");
+  });
+  it("ignores values written by other versions", () => {
+    expect(parsePrefs({ uiSize: "huge" }).uiSize).toBe("comfortable");
+    expect(parsePrefs({ uiSize: 3 }).uiSize).toBe("comfortable");
+  });
+});

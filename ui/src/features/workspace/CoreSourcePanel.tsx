@@ -50,7 +50,7 @@ export function CoreSourcePanel({ form, onChange, gitAvailable, sync, onSync, on
           aria-label="Repository URL"
           title="A GitHub repository, any git URL or a local path"
           spellCheck={false}
-          className="h-7 font-mono text-[0.85rem]"
+          className="h-9 font-mono text-data"
         />
         <Button variant="outline" size="sm" onClick={onSync} disabled={!gitAvailable || !url || syncing} aria-label="Sync repository">
           <RefreshCwIcon className={cn(syncing && "animate-spin")} /> Sync
@@ -69,8 +69,8 @@ export function CoreSourcePanel({ form, onChange, gitAvailable, sync, onSync, on
                 aria-selected={form.mode === m.id}
                 onClick={() => onChange({ mode: m.id })}
                 className={cn(
-                  "flex-1 rounded-md px-2 py-0.5 text-[0.85rem] transition-colors",
-                  form.mode === m.id ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  "flex-1 rounded-md px-2 py-0.5 text-meta transition-colors",
+                  form.mode === m.id ? "bg-background font-medium text-foreground shadow-sm" : "text-fg-muted hover:text-foreground",
                 )}
               >
                 {m.label}
@@ -91,7 +91,7 @@ export function CoreSourcePanel({ form, onChange, gitAvailable, sync, onSync, on
 
 export function PanelTitle({ icon, children, right }: { icon: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="flex h-6 items-center gap-1.5 text-[0.75rem] font-semibold tracking-wider text-muted-foreground uppercase [&_svg]:size-3.5">
+    <div className="flex h-6 items-center gap-1.5 text-meta font-semibold tracking-wider text-fg-muted uppercase [&_svg]:size-4">
       {icon}
       {children}
       <div className="ml-auto normal-case">{right}</div>
@@ -102,12 +102,12 @@ export function PanelTitle({ icon, children, right }: { icon: React.ReactNode; c
 function GitMissing() {
   const e = explainError({ code: "io_error", message: "git: executable file not found in PATH" });
   return (
-    <div role="alert" className="flex gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-[0.9rem]">
-      <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+    <div role="alert" className="flex gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-data">
+      <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-danger" />
       <div>
-        <div className="font-semibold text-destructive">{e.title}</div>
+        <div className="font-semibold text-danger">{e.title}</div>
         <div>{e.hint}</div>
-        <div className="mt-1 text-[0.8rem] text-muted-foreground">Download: https://git-scm.com/downloads</div>
+        <div className="mt-1 text-meta text-fg-muted">Download: https://git-scm.com/downloads</div>
       </div>
     </div>
   );
@@ -119,11 +119,11 @@ function SyncStatus({ sync, url, repo, syncing, onCancel, onRetry }: { sync: Syn
     const pct = progress?.percent;
     return (
       <div className="space-y-1" role="status" aria-live="polite">
-        <div className="flex items-center gap-2 text-[0.82rem]">
-          <Loader2Icon className="size-3.5 shrink-0 animate-spin text-primary" />
+        <div className="flex items-center gap-2 text-meta">
+          <Loader2Icon className="size-4 shrink-0 animate-spin text-brand-text" />
           <span className="min-w-0 flex-1 truncate">
             <span className="font-medium capitalize">{progress?.phase ?? "sync"}</span>
-            <span className="text-muted-foreground"> · {progress?.message ?? (repo ? "Checking for updates…" : "Contacting the repository…")}</span>
+            <span className="text-fg-muted"> · {progress?.message ?? (repo ? "Checking for updates…" : "Contacting the repository…")}</span>
           </span>
           <Button variant="ghost" size="xs" onClick={onCancel}>
             {repo ? "Skip" : "Cancel"}
@@ -132,19 +132,19 @@ function SyncStatus({ sync, url, repo, syncing, onCancel, onRetry }: { sync: Syn
         <div className="h-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={pct}>
           <div className={cn("h-full rounded-full bg-primary transition-[width]", pct === undefined && "w-1/3 animate-pulse")} style={pct === undefined ? undefined : { width: `${pct}%` }} />
         </div>
-        {repo && <div className="text-[0.78rem] text-muted-foreground">Showing the local copy while it updates.</div>}
+        {repo && <div className="text-meta text-fg-muted">Showing the local copy while it updates.</div>}
       </div>
     );
   }
   if (sync.forUrl === url && sync.error) {
     const e = explainError(sync.error);
     return (
-      <div role="alert" className={cn("flex gap-2 rounded-lg border p-2 text-[0.85rem]", repo ? "border-warn/40 bg-warn/10" : "border-destructive/40 bg-destructive/10")}>
-        {repo ? <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-warn" /> : <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />}
+      <div role="alert" className={cn("flex gap-2 rounded-lg border p-2 text-meta", repo ? "border-warn/40 bg-warn/10" : "border-destructive/40 bg-destructive/10")}>
+        {repo ? <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-warn" /> : <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-danger" />}
         <div className="min-w-0 flex-1">
           <div className="font-semibold">{repo ? `${e.title}: showing the local copy` : e.title}</div>
-          <div className="break-words text-muted-foreground">{e.message}</div>
-          {!repo && <div className="text-[0.8rem] text-muted-foreground">{e.hint}</div>}
+          <div className="break-words text-fg-muted">{e.message}</div>
+          {!repo && <div className="text-meta text-fg-muted">{e.hint}</div>}
         </div>
         <Button variant="outline" size="xs" onClick={onRetry}>
           Retry
@@ -154,34 +154,34 @@ function SyncStatus({ sync, url, repo, syncing, onCancel, onRetry }: { sync: Syn
   }
   if (repo) {
     return (
-      <div className="flex items-center gap-1.5 text-[0.8rem] text-muted-foreground" data-testid="sync-summary">
+      <div className="flex items-center gap-1.5 text-meta text-fg-muted" data-testid="sync-summary">
         <span className="size-1.5 rounded-full bg-ok" />
         {repo.tags.length} tags · {repo.branches.length} branches · synced {fmtDate(repo.fetchedAt)} {repo.fetchedAt.slice(11, 16)}
       </div>
     );
   }
-  return <div className="text-[0.8rem] text-muted-foreground">Press Sync to read tags and branches from the repository.</div>;
+  return <div className="text-meta text-fg-muted">Press Sync to read tags and branches from the repository.</div>;
 }
 
 function Placeholder({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-lg border border-dashed p-3 text-center text-[0.85rem] text-muted-foreground">{children}</p>;
+  return <p className="rounded-lg border border-dashed p-3 text-center text-meta text-fg-muted">{children}</p>;
 }
 
 function AutoMode({ repo, epoch, hasSelection }: { repo: CoreRepo | undefined; epoch: number | undefined; hasSelection: boolean }) {
   const tag = repo ? resolveAuto(repo.tags, epoch) : undefined;
   return (
-    <div className="space-y-2 rounded-lg border bg-muted/30 p-3 text-[0.88rem]" data-testid="auto-info">
+    <div className="space-y-2 rounded-lg border bg-muted/30 p-3 text-data" data-testid="auto-info">
       <p>
         Uses the newest tag whose <code className="font-mono">#define EPOCH</code> equals the epoch of the state files.
       </p>
       {epoch === undefined ? (
-        <p className="text-muted-foreground">{hasSelection ? "Reading the epoch…" : "Choose the state folder or file to see which tag this resolves to."}</p>
+        <p className="text-fg-muted">{hasSelection ? "Reading the epoch…" : "Choose the state folder or file to see which tag this resolves to."}</p>
       ) : !repo ? (
-        <p className="text-muted-foreground">State epoch {epoch}. Sync the repository to resolve the tag.</p>
+        <p className="text-fg-muted">State epoch {epoch}. Sync the repository to resolve the tag.</p>
       ) : tag ? (
         <p>
           State epoch <b className="font-mono">{epoch}</b> resolves to tag <b className="font-mono text-ok">{tag.ref}</b>
-          <span className="text-muted-foreground">
+          <span className="text-fg-muted">
             {" "}
             · {tag.version ? `v${tag.version} · ` : ""}
             {fmtDate(tag.date)} · {shortSha(tag.sha)}
@@ -202,7 +202,7 @@ function AutoMode({ repo, epoch, hasSelection }: { repo: CoreRepo | undefined; e
 function SearchBox({ value, onChange, placeholder, onEnter, onDown }: { value: string; onChange: (v: string) => void; placeholder: string; onEnter?: () => void; onDown: () => void }) {
   return (
     <div className="relative mb-1.5">
-      <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-fg-muted" />
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -220,11 +220,11 @@ function SearchBox({ value, onChange, placeholder, onEnter, onDown }: { value: s
         placeholder={placeholder}
         aria-label={placeholder}
         spellCheck={false}
-        className="h-7 pl-7 text-[0.85rem]"
+        className="h-9 pl-8 text-data"
       />
       {value && (
-        <button type="button" aria-label="Clear search" className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => onChange("")}>
-          <XIcon className="size-3.5" />
+        <button type="button" aria-label="Clear search" className="absolute top-1/2 right-1.5 -translate-y-1/2 text-fg-muted hover:text-foreground" onClick={() => onChange("")}>
+          <XIcon className="size-4" />
         </button>
       )}
     </div>
@@ -243,12 +243,12 @@ function TagMode({ repo, epoch, value, onPick }: { repo: CoreRepo | undefined; e
     <>
       <SearchBox value={q} onChange={setQ} placeholder="Search tags: version, epoch, name" onEnter={() => shown[0] && onPick(shown[0].ref)} onDown={() => focusFirst(list)} />
       {epoch !== undefined && (
-        <p className="mb-1 text-[0.78rem] text-muted-foreground">
+        <p className="mb-1 text-meta text-fg-muted">
           {matches > 0 ? <>Green rows match the state epoch {epoch}.</> : <>No tag has the state epoch {epoch}.</>}
         </p>
       )}
       <div ref={setList} role="listbox" aria-label="Tags" onKeyDown={onListKeys} className="min-h-0 flex-1 overflow-y-auto rounded-lg border">
-        {shown.length === 0 && <p className="p-3 text-center text-[0.85rem] text-muted-foreground">No tag matches “{q}”.</p>}
+        {shown.length === 0 && <p className="p-3 text-center text-meta text-fg-muted">No tag matches “{q}”.</p>}
         {shown.map((t) => (
           <VersionRow key={t.ref} v={t} selected={t.ref === value} matchEpoch={epoch} onPick={() => onPick(t.ref)} />
         ))}
@@ -270,7 +270,7 @@ function BranchMode({ repo, value, onPick }: { repo: CoreRepo | undefined; value
           <VersionRow key={b.ref} v={b} selected={b.ref === value} onPick={() => onPick(b.ref)} mark={b.ref === repo.defaultBranch ? "default" : undefined} />
         ))}
       </div>
-      <p className="mt-1 text-[0.78rem] text-muted-foreground">A branch is read at its current head.</p>
+      <p className="mt-1 text-meta text-fg-muted">A branch is read at its current head.</p>
     </>
   );
 }
@@ -294,7 +294,7 @@ function CommitMode({ url, repo, enabled, value, onPick }: { url: string; repo: 
           onChange={(e) => setFrom(e.target.value)}
           aria-label="Commits of"
           title="Branch whose history is listed"
-          className="mb-1.5 h-7 max-w-[7rem] shrink-0 rounded-lg border border-input bg-transparent px-1.5 font-mono text-[0.8rem] outline-none focus-visible:border-ring dark:bg-input/30"
+          className="mb-1.5 h-9 max-w-[7.5rem] shrink-0 rounded-lg border border-line-input bg-surface-1 px-2 font-mono text-data outline-none focus-visible:border-ring"
         >
           {repo.branches.map((b) => (
             <option key={b.ref} value={b.ref} className="bg-popover">
@@ -317,7 +317,7 @@ function CommitMode({ url, repo, enabled, value, onPick }: { url: string; repo: 
         {typedSha && (
           <RefRow selected={value === typedSha} onPick={() => onPick(typedSha)}>
             <span className="min-w-0 flex-1 truncate">
-              Use commit <span className="font-mono text-primary">{typedSha}</span>
+              Use commit <span className="font-mono text-brand-text">{typedSha}</span>
             </span>
           </RefRow>
         )}
@@ -325,14 +325,14 @@ function CommitMode({ url, repo, enabled, value, onPick }: { url: string; repo: 
           <CommitRow key={c.sha} c={c} selected={c.sha === value || (value !== "" && value.length >= 7 && c.sha.startsWith(value))} onPick={() => onPick(c.sha)} />
         ))}
         {commits.loading && (
-          <p className="flex items-center justify-center gap-1.5 p-2 text-[0.8rem] text-muted-foreground">
-            <Loader2Icon className="size-3.5 animate-spin" /> Loading commits…
+          <p className="flex items-center justify-center gap-1.5 p-2 text-meta text-fg-muted">
+            <Loader2Icon className="size-4 animate-spin" /> Loading commits…
           </p>
         )}
-        {commits.error && <p className="p-2 text-[0.82rem] text-destructive">{explainError(commits.error).message}</p>}
-        {!commits.loading && !commits.error && commits.items.length === 0 && !typedSha && <p className="p-3 text-center text-[0.85rem] text-muted-foreground">No commits match.</p>}
+        {commits.error && <p className="p-2 text-meta text-danger">{explainError(commits.error).message}</p>}
+        {!commits.loading && !commits.error && commits.items.length === 0 && !typedSha && <p className="p-3 text-center text-meta text-fg-muted">No commits match.</p>}
       </div>
-      <p className="mt-1 text-[0.78rem] text-muted-foreground" data-testid="commit-count">
+      <p className="mt-1 text-meta text-fg-muted" data-testid="commit-count">
         {commits.total !== undefined ? `${commits.items.length} of ${commits.total} commits` : `${commits.items.length} commits`}
         {value && <> · selected <span className="font-mono">{shortSha(value)}</span></>}
       </p>

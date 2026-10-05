@@ -7,11 +7,11 @@ export function RpcErrorView({ error, onRetry, compact = false }: { error: unkno
   const e = toRpcError(error);
   return (
     <div role="alert" className={compact ? "flex items-start gap-2 p-3 text-sm" : "mx-auto flex max-w-md flex-col items-center gap-2 p-8 text-center"}>
-      <AlertTriangleIcon className={compact ? "mt-0.5 size-4 shrink-0 text-destructive" : "size-8 text-destructive"} />
+      <AlertTriangleIcon className={compact ? "mt-0.5 size-4 shrink-0 text-danger" : "size-8 text-danger"} />
       <div className="min-w-0 space-y-1">
         <div className="font-semibold">{ERROR_TITLES[e.code]}</div>
-        <p className="break-words text-muted-foreground">{e.message}</p>
-        <p className="text-[0.85rem] text-muted-foreground/80">{ERROR_HINTS[e.code]}</p>
+        <p className="break-words text-fg-muted">{e.message}</p>
+        <p className="text-meta text-fg-subtle">{ERROR_HINTS[e.code]}</p>
         {onRetry && (
           <Button variant="outline" size="xs" className="mt-2" onClick={onRetry}>
             <RefreshCwIcon /> Retry

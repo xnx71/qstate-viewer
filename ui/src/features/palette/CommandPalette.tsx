@@ -178,10 +178,10 @@ export function CommandPalette() {
                       keywords={[String(c.index), c.status]}
                       onSelect={run(() => selectContract(c.index))}
                     >
-                      <span className="w-5 text-right font-mono text-muted-foreground">{c.index}</span>
+                      <span className="w-5 text-right font-mono text-fg-muted">{c.index}</span>
                       <span className="font-medium">{contractDisplayName(c)}</span>
                       <span className="ml-auto flex items-center gap-2">
-                        {c.index === selected && <span className="text-[0.75rem] text-muted-foreground">current</span>}
+                        {c.index === selected && <span className="text-meta text-fg-muted">current</span>}
                         <StatusBadge status={c.status} compact />
                       </span>
                     </CommandItem>

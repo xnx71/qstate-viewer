@@ -12,7 +12,7 @@ import { contractsAtom, diagnosticsOpenAtom, workspaceAtom } from "@/store/works
 type Filter = "all" | Diagnostic["severity"];
 
 const SEV = {
-  error: { Icon: AlertCircleIcon, tone: "text-destructive", label: "Errors" },
+  error: { Icon: AlertCircleIcon, tone: "text-danger", label: "Errors" },
   warning: { Icon: AlertTriangleIcon, tone: "text-warn", label: "Warnings" },
   note: { Icon: InfoIcon, tone: "text-info", label: "Notes" },
 } as const;
@@ -55,8 +55,8 @@ export function DiagnosticsDialog() {
               aria-selected={filter === f}
               onClick={() => setFilter(f)}
               className={cn(
-                "rounded-md px-2 py-0.5 text-[0.85rem] transition-colors",
-                filter === f ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted",
+                "rounded-md px-2 py-0.5 text-meta transition-colors",
+                filter === f ? "bg-accent text-accent-foreground" : "text-fg-muted hover:bg-muted",
               )}
             >
               {f === "all" ? `All ${diags.length}` : `${SEV[f].label} ${counts[f]}`}
@@ -64,18 +64,18 @@ export function DiagnosticsDialog() {
           ))}
         </div>
         <ul className="min-h-0 flex-1 divide-y overflow-y-auto rounded-lg border" aria-label="Diagnostics list">
-          {shown.length === 0 && <li className="p-6 text-center text-muted-foreground">Nothing to show.</li>}
+          {shown.length === 0 && <li className="p-6 text-center text-fg-muted">Nothing to show.</li>}
           {shown.map((d, i) => {
             const S = SEV[d.severity];
             const c = d.contract !== undefined ? contracts.find((x) => x.index === d.contract) : undefined;
             return (
-              <li key={i} className="flex gap-2.5 px-3 py-2 text-[0.92rem]">
+              <li key={i} className="flex gap-2.5 px-3 py-2 text-data">
                 <S.Icon className={cn("mt-0.5 size-4 shrink-0", S.tone)} aria-label={d.severity} />
                 <div className="min-w-0 flex-1">
                   <p className="break-words">{d.message}</p>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[0.8rem]">
+                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-meta">
                     {d.file && (
-                      <button type="button" className="font-mono text-primary hover:underline" onClick={() => void copyLoc(d)} title="Copy location">
+                      <button type="button" className="font-mono text-brand-text hover:underline" onClick={() => void copyLoc(d)} title="Copy location">
                         {d.file}
                         {d.line ? `:${d.line}` : ""}
                       </button>
@@ -83,7 +83,7 @@ export function DiagnosticsDialog() {
                     {d.contract !== undefined && (
                       <button
                         type="button"
-                        className="rounded bg-muted px-1.5 text-muted-foreground hover:bg-accent"
+                        className="rounded bg-muted px-1.5 text-fg-muted hover:bg-accent"
                         onClick={() => {
                           selectContract(d.contract as number);
                           setOpen(false);

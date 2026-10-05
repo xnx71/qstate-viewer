@@ -9,27 +9,18 @@ import type { ContractInfo } from "@/rpc/contract";
 import { selectContract, openWorkspace } from "@/store/actions";
 import { changeStampsAtom, contractsAtom, diagnosticsOpenAtom, pendingChangesAtom, selectedContractAtom, workspaceAtom } from "@/store/workspace";
 import { store } from "@/store/store";
-import { StatusBadge } from "./StatusBadge";
+import { contractMenu } from "@/features/contextmenu/builders/contract";
+import { useContextMenu } from "@/features/contextmenu/useContextMenu";
+import { contractDisplayName, matchesContract } from "./names";
+import { STATUS_META, StatusBadge } from "./StatusBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 
-export function contractDisplayName(c: ContractInfo): string {
-  return c.name || c.structName || (c.index === 0 ? "Contract0" : `#${c.index}`);
-}
-
-export function matchesContract(c: ContractInfo, q: string): boolean {
-  const t = q.trim().toLowerCase();
-  if (!t) return true;
-  return (
-    String(c.index) === t ||
-    contractDisplayName(c).toLowerCase().includes(t) ||
-    (c.structName ?? "").toLowerCase().includes(t) ||
-    c.status.includes(t)
-  );
-}
+export { contractDisplayName, matchesContract } from "./names";
 
 function ContractRow({ c, selected, pending, onSelect }: { c: ContractInfo; selected: boolean; pending: boolean; onSelect: () => void }) {
   const changed = useChanged(`c${c.index}`, String(c.generation));
+  const m = STATUS_META[c.status];
   return (
     <button
       type="button"
@@ -37,24 +28,25 @@ function ContractRow({ c, selected, pending, onSelect }: { c: ContractInfo; sele
       aria-selected={selected}
       data-contract={c.index}
       onClick={onSelect}
-      title={c.statusMessage ?? undefined}
+      title={c.statusMessage ?? `${m.label}: ${m.hint}`}
       className={cn(
-        "group relative flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none",
-        "hover:bg-sidebar-accent/60 focus-visible:ring-2 focus-visible:ring-ring/60",
-        selected && "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_2px_0_0_var(--primary)]",
-        c.status === "missing-file" && !selected && "opacity-70",
+        "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left outline-none transition-colors",
+        "hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/60",
+        selected && "bg-sel shadow-[inset_3px_0_0_var(--sel-edge)] hover:bg-sel",
+        c.status === "missing-file" && !selected && "opacity-75",
       )}
     >
       <FlashOverlay tick={changed.tick} />
-      <span className="w-5 shrink-0 text-right font-mono text-[0.8rem] text-muted-foreground tabular">{c.index}</span>
+      <StatusBadge status={c.status} compact className="shrink-0" />
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          <span className="truncate font-semibold">{contractDisplayName(c)}</span>
-          {pending && <span className="size-1.5 shrink-0 rounded-full bg-warn" title="Changed on disk since you last viewed it" />}
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-ui font-semibold">{contractDisplayName(c)}</span>
+          <span className="shrink-0 font-mono text-meta text-fg-muted tabular">{c.file ? fmtBytes(c.file.size) : "-"}</span>
         </span>
-        <span className="flex items-center justify-between gap-2 text-[0.8rem] text-muted-foreground">
-          <StatusBadge status={c.status} />
-          <span className="font-mono tabular">{c.file ? fmtBytes(c.file.size) : "-"}</span>
+        <span className="flex items-center gap-2 text-meta text-fg-muted">
+          <span className="font-mono tabular">#{c.index}</span>
+          <span className={cn("truncate", m.text)}>{c.status === "ok" ? "" : m.label}</span>
+          {pending && <span className="ml-auto size-2 shrink-0 rounded-full bg-warn" title="Changed on disk since you last viewed it" />}
         </span>
       </span>
     </button>
@@ -74,6 +66,13 @@ export function ContractSidebar() {
   const errs = diag.filter((d) => d.severity === "error").length;
   const warns = diag.filter((d) => d.severity === "warning").length;
 
+  const ctx = useContextMenu((e) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-contract]");
+    const idx = el ? Number(el.dataset["contract"]) : NaN;
+    const c = contracts.find((x) => x.index === idx);
+    return c ? contractMenu(c, () => selectContract(c.index)) : null;
+  });
+
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
@@ -88,17 +87,17 @@ export function ContractSidebar() {
   };
 
   return (
-    <aside className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground" aria-label="Contracts">
-      <div className="space-y-2 border-b border-sidebar-border p-2">
+    <aside className="flex h-full min-h-0 flex-col bg-sidebar-bg text-fg" aria-label="Contracts">
+      <div className="space-y-2.5 border-b p-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-[0.78rem] font-semibold tracking-wider text-muted-foreground uppercase">Contracts</h2>
-          <span className="font-mono text-[0.78rem] text-muted-foreground tabular">
+          <h2 className="text-meta font-semibold tracking-wider text-fg-muted uppercase">Contracts</h2>
+          <span className="chip rounded-md px-1.5 font-mono text-meta text-fg-muted tabular">
             {filtered.length}
             {filtered.length !== contracts.length && `/${contracts.length}`}
           </span>
         </div>
         <div className="relative">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-fg-muted" />
           <input
             id="contract-filter"
             value={q}
@@ -111,19 +110,19 @@ export function ContractSidebar() {
                 listRef.current?.querySelector<HTMLButtonElement>("[role=option]")?.focus();
               }
             }}
-            placeholder="Filter by name, index, status"
+            placeholder="Filter contracts"
             aria-label="Filter contracts"
-            className="h-7 w-full rounded-md border border-input bg-background/40 pr-6 pl-7 text-[0.92rem] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="h-9 w-full rounded-lg border border-line-input bg-surface-1 pr-8 pl-8 text-data outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
           />
           {q && (
-            <button type="button" aria-label="Clear filter" className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setQ("")}>
-              <XIcon className="size-3.5" />
+            <button type="button" aria-label="Clear filter" className="absolute top-1/2 right-2 -translate-y-1/2 text-fg-muted hover:text-fg" onClick={() => setQ("")}>
+              <XIcon className="size-4" />
             </button>
           )}
         </div>
       </div>
-      <div ref={listRef} role="listbox" aria-label="Contract list" onKeyDown={onKey} className="min-h-0 flex-1 overflow-y-auto p-1.5">
-        {filtered.length === 0 && <p className="px-2 py-6 text-center text-muted-foreground">No contract matches “{q}”.</p>}
+      <div ref={listRef} role="listbox" aria-label="Contract list" onKeyDown={onKey} {...ctx} className="min-h-0 flex-1 overflow-y-auto p-2">
+        {filtered.length === 0 && <p className="px-2 py-8 text-center text-data text-fg-muted">No contract matches “{q}”.</p>}
         <div className="space-y-0.5">
           {filtered.map((c) => (
             <ContractRow
@@ -137,9 +136,9 @@ export function ContractSidebar() {
         </div>
       </div>
       {ws && (
-        <div className="space-y-2 border-t border-sidebar-border p-2 text-[0.85rem]">
+        <div className="space-y-2 border-t p-3 text-data">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">Epoch</span>
+            <span className="text-fg-muted">Epoch</span>
             {ws.state.scope === "file" ? (
               <span className="font-mono" title={ws.contracts[0]?.file?.path}>
                 {ws.state.epoch} · single file
@@ -151,7 +150,7 @@ export function ContractSidebar() {
                   if (v) void openWorkspace({ ...ws.request, epoch: Number(v) });
                 }}
               >
-                <SelectTrigger size="sm" className="h-6 w-24 font-mono" aria-label="Epoch">
+                <SelectTrigger size="sm" className="w-28 font-mono" aria-label="Epoch">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -169,8 +168,8 @@ export function ContractSidebar() {
           </div>
           <Button
             variant="ghost"
-            size="xs"
-            className={cn("w-full justify-start gap-1.5", errs ? "text-destructive" : warns ? "text-warn" : "text-muted-foreground")}
+            size="sm"
+            className={cn("w-full justify-start gap-2", errs ? "text-danger" : warns ? "text-warn" : "text-fg-muted")}
             onClick={() => store.set(diagnosticsOpenAtom, true)}
           >
             <FileWarningIcon />

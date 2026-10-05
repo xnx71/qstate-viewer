@@ -125,6 +125,32 @@ export function collapseAllNodes(contract: number): void {
   update(contract, (s) => ({ ...s, root: { ...s.root, kids: [] } }));
 }
 
+/**
+ * Expand the (expanded) node at `path` one level: every child that has children of its own gets expanded, at most
+ * `limit` of them (the first page of the node's children is what is inspected, so the cost is bounded).
+ */
+export async function expandChildrenOneLevel(contract: number, path: number[], limit = 40): Promise<void> {
+  const node = nodeAtPath(store.get(treeAtomFamily(contract)).root, path);
+  if (!node) return;
+  try {
+    const page = await fetchChildren(contract, node.id, node.view, hideEmpty(), 0);
+    const targets = page.items.map((info, i) => ({ info, index: page.offset + i })).filter((x) => x.info.childCount > 0).slice(0, limit);
+    update(contract, (s) => {
+      let root = s.root;
+      for (const t of targets) root = expandChild(root, path, { id: t.info.id, index: t.index, label: t.info.label });
+      return { ...s, root };
+    });
+    for (const t of targets) void loadTotal(contract, [...path, t.index]);
+  } catch (e) {
+    toast.error(describeError(e));
+  }
+}
+
+/** Collapse every expanded child of the node at `path` (the node itself stays expanded). */
+export function collapseChildren(contract: number, path: number[]): void {
+  update(contract, (s) => ({ ...s, root: updateAtPath(s.root, path, (n) => (n.kids.length ? { ...n, kids: [] } : n)) }));
+}
+
 /** After a live update: refresh the totals of all expanded nodes (cheap: one request per expanded node). */
 export function refreshTree(contract: number): void {
   const st = store.get(treeAtomFamily(contract));

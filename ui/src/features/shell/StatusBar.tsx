@@ -21,7 +21,7 @@ function Selected({ contract }: { contract: number }) {
   const n = node.data;
   return (
     <span className="truncate">
-      <span className="text-foreground">{sel.path.map((p) => p.label).join(".")}</span> · {n.typeName} · {fmtHexOffset(n.offset)} · {fmtCount(n.size)} B
+      <span className="text-fg">{sel.path.map((p) => p.label).join(".")}</span> <span className="px-1 text-fg-subtle">·</span>{n.typeName}<span className="px-1 text-fg-subtle">·</span>{fmtHexOffset(n.offset)}<span className="px-1 text-fg-subtle">·</span>{fmtCount(n.size)} B
     </span>
   );
 }
@@ -33,7 +33,7 @@ export function StatusBar() {
   const pending = useAtomValue(pendingChangesAtom);
   const now = useNow();
   return (
-    <footer className="flex h-6 shrink-0 items-center gap-3 border-t bg-card/60 px-2.5 font-mono text-[0.78rem] text-muted-foreground" role="contentinfo">
+    <footer className="flex h-8 shrink-0 items-center gap-4 border-t bg-canvas px-3 font-mono text-meta text-fg-muted" role="contentinfo">
       <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap">{c ? <Selected contract={c.index} /> : <span>{ws ? "select a contract" : "no workspace"}</span>}</div>
       {c?.file && (
         <span className="shrink-0" title={c.file.path}>
@@ -42,7 +42,7 @@ export function StatusBar() {
       )}
       {pending.lastAt > 0 && <span className="shrink-0 text-warn">last change {fmtAgo(pending.lastAt, now)}</span>}
       {ws && <span className="shrink-0">{ws.contracts.length === 1 ? "1 contract" : `${ws.contracts.length} contracts`}</span>}
-      <span className="shrink-0 rounded bg-muted px-1.5 text-[0.72rem]" title="RPC transport">
+      <span className="chip shrink-0 rounded-md px-1.5 text-meta text-fg-muted" title="RPC transport">
         {info?.transport ?? "…"}
       </span>
     </footer>

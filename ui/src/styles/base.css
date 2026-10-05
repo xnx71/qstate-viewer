@@ -1,0 +1,185 @@
+/* Base element styles and the few component-level classes that Tailwind utilities cannot express. */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    font-family: var(--font-ui);
+    font-size: calc(16px * var(--ui-scale, 1));
+    -webkit-text-size-adjust: 100%;
+    /* Inter: single-storey a, open digits, straight l; tabular figures keep numeric columns aligned */
+    font-feature-settings: "cv11", "ss01", "tnum";
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-canvas text-fg;
+    font-size: var(--fs-ui);
+    line-height: 1.5;
+    overflow: hidden;
+  }
+  button,
+  [role="button"] {
+    cursor: default;
+  }
+  /* Data and identifiers: monospace, ligatures off, slashed/dotted zero distinct from O */
+  code,
+  kbd,
+  samp,
+  pre,
+  .font-mono {
+    font-feature-settings: "calt" 0, "liga" 0, "tnum";
+    font-variant-ligatures: none;
+  }
+  ::placeholder {
+    color: var(--fg-subtle);
+    opacity: 1;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Content-visibility friendly hairline used between dense rows */
+  .hairline-b {
+    box-shadow: inset 0 -1px 0 var(--line);
+  }
+  /* Tinted chip: colour from `--chip`, set by the element (text-t-int etc. set `color`) */
+  .chip {
+    background: color-mix(in oklab, currentColor var(--tint), transparent);
+  }
+  .chip-on-sel {
+    background: color-mix(in oklab, currentColor var(--tint), var(--sel));
+  }
+}
+
+/* thin scrollbars (WebKit + Firefox) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--fg) 26%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--fg) 24%, transparent);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--fg) 42%, transparent);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--brand) 38%, transparent);
+}
+
+/* ---- placeholders: never shown for content that is loaded; appear only after 120 ms, fade in, no shimmer ------- */
+@keyframes ph-in {
+  to {
+    opacity: 1;
+  }
+}
+.ph {
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--fg) 9%, transparent);
+  opacity: 0;
+  animation: ph-in var(--dur-base) ease-out 120ms forwards;
+}
+
+/* the row / tab a context menu was opened for */
+[data-ctx-target] {
+  outline: 1px solid color-mix(in oklab, var(--brand) 75%, transparent);
+  outline-offset: -1px;
+}
+
+/* Rows whose data belongs to an older query / generation that is being replaced */
+.is-stale {
+  opacity: 0.62;
+  transition: opacity var(--dur-base) ease;
+}
+.is-fresh {
+  transition: opacity var(--dur-base) ease;
+}
+
+/* ---- tree rows: column grid (container-query based column hiding), indent guides ------------------------------- */
+.tree-cols {
+  display: grid;
+  grid-template-columns: minmax(13rem, 1.2fr) minmax(0, 1.3fr) 0 0 0;
+  column-gap: 0.75rem;
+}
+@container tree (min-width: 700px) {
+  .tree-cols {
+    grid-template-columns: minmax(13rem, 1.2fr) minmax(0, 1.3fr) 0 5.25rem 3.75rem;
+  }
+}
+@container tree (min-width: 940px) {
+  .tree-cols {
+    grid-template-columns: minmax(14rem, 1.1fr) minmax(0, 1.3fr) minmax(0, 0.9fr) 5.25rem 3.75rem;
+  }
+}
+.tree-cols > .col-type,
+.tree-cols > .col-off,
+.tree-cols > .col-size {
+  overflow: hidden;
+}
+.indent-guides {
+  --indent: 1.2rem;
+  position: relative;
+}
+.indent-guides::before {
+  content: "";
+  position: absolute;
+  left: 0.55rem;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--depth) * var(--indent));
+  background-image: repeating-linear-gradient(90deg, var(--line-strong) 0 1px, transparent 1px var(--indent));
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* ---- theme change: a short colour transition, only while switching ------------------------------------------- */
+html.theme-anim,
+html.theme-anim *,
+html.theme-anim *::before,
+html.theme-anim *::after {
+  transition:
+    background-color 260ms ease,
+    border-color 260ms ease,
+    color 260ms ease,
+    fill 260ms ease,
+    stroke 260ms ease,
+    box-shadow 260ms ease !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .ph {
+    animation: none;
+    opacity: 1;
+  }
+}

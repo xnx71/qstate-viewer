@@ -104,10 +104,10 @@ function DialogBody({ onClose, canClose }: { onClose: () => void; canClose: bool
     <div className="relative flex min-h-0 flex-1 flex-col" onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && submit()}>
       <AnimatePresence>{opening && <OpeningOverlay startedAt={phase.startedAt} />}</AnimatePresence>
       <header className="flex items-center gap-3 border-b px-4 py-2.5 pr-12">
-        <BoxIcon className="size-5 shrink-0 text-primary" />
+        <BoxIcon className="size-5 shrink-0 text-brand-text" />
         <div className="min-w-0 flex-1">
           <DialogTitle className="text-base">{ws ? "Open workspace" : "Welcome to qstate-viewer"}</DialogTitle>
-          <DialogDescription className="truncate text-[0.82rem]">
+          <DialogDescription className="truncate text-meta">
             A <b>core source</b> (git: its C++ headers define the contract layouts) plus <b>state files</b> (<code className="font-mono">contractNNNN.EEE</code>).
           </DialogDescription>
         </div>
@@ -129,9 +129,9 @@ function DialogBody({ onClose, canClose }: { onClose: () => void; canClose: bool
           aria-label="Extra preprocessor defines"
           title="Extra preprocessor defines, e.g. INCLUDE_CONTRACT_TEST_EXAMPLES"
           spellCheck={false}
-          className="h-7 w-44 font-mono text-[0.8rem]"
+          className="h-9 w-48 font-mono text-data"
         />
-        <p className="min-w-0 flex-1 truncate text-[0.82rem] text-muted-foreground" data-testid="open-summary">
+        <p className="min-w-0 flex-1 truncate text-meta text-fg-muted" data-testid="open-summary">
           {problem ?? <Summary req={req as WorkspaceRequest} />}
         </p>
         {canClose && (
@@ -163,7 +163,7 @@ function RecentMenu({ recents, onPick }: { recents: WorkspaceRequest[]; onPick: 
       <DropdownMenuTrigger
         render={
           <Button variant="outline" size="sm" aria-label="Recent workspaces">
-            <HistoryIcon /> Recent <ChevronDownIcon className="size-3" />
+            <HistoryIcon /> Recent <ChevronDownIcon className="size-3.5" />
           </Button>
         }
       />
@@ -171,10 +171,10 @@ function RecentMenu({ recents, onPick }: { recents: WorkspaceRequest[]; onPick: 
         <DropdownMenuLabel>Recent workspaces</DropdownMenuLabel>
         {recents.map((r) => (
           <DropdownMenuItem key={JSON.stringify(r)} onClick={() => onPick(r)} className="flex-col items-start gap-0">
-            <span className="w-full truncate font-mono text-[0.85rem]">
+            <span className="w-full truncate font-mono text-meta">
               {repoShortName(r.core.repoUrl)} @ {r.core.ref.length >= 40 ? r.core.ref.slice(0, 7) : r.core.ref}
             </span>
-            <span className="w-full truncate font-mono text-[0.78rem] text-muted-foreground">
+            <span className="w-full truncate font-mono text-meta text-fg-muted">
               {shortenPath(r.statePath, 52)}
               {r.epoch !== undefined ? ` · epoch ${r.epoch}` : ""}
             </span>
@@ -188,12 +188,12 @@ function RecentMenu({ recents, onPick }: { recents: WorkspaceRequest[]; onPick: 
 function OpenError({ message, code }: { message: string; code: string }) {
   const e = explainError({ code, message });
   return (
-    <div role="alert" className="mx-4 mb-2 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-[0.88rem]">
-      <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+    <div role="alert" className="mx-4 mb-2 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-data">
+      <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-danger" />
       <div className="min-w-0">
-        <div className="font-semibold text-destructive">{e.title}</div>
+        <div className="font-semibold text-danger">{e.title}</div>
         <div className="break-words">{e.message}</div>
-        <div className="text-[0.8rem] text-muted-foreground">{e.hint}</div>
+        <div className="text-meta text-fg-muted">{e.hint}</div>
       </div>
     </div>
   );
@@ -218,13 +218,13 @@ function OpeningOverlay({ startedAt }: { startedAt: number }) {
       role="status"
       aria-live="polite"
     >
-      <Loader2Icon className="size-8 animate-spin text-primary" />
+      <Loader2Icon className="size-8 animate-spin text-brand-text" />
       <div className="text-center">
         <div className="text-base font-semibold">Opening workspace…</div>
-        <div className="mt-1 text-[0.92rem]" data-testid="open-progress">
+        <div className="mt-1 text-data" data-testid="open-progress">
           {progress ? PHASES[progress.phase] : "Starting"}
         </div>
-        <div className="max-w-[28rem] truncate text-[0.82rem] text-muted-foreground">{progress?.message ?? " "}</div>
+        <div className="max-w-[28rem] truncate text-meta text-fg-muted">{progress?.message ?? " "}</div>
       </div>
       <div className="relative h-1 w-72 overflow-hidden rounded-full bg-muted">
         {pct === undefined ? (
@@ -233,7 +233,7 @@ function OpeningOverlay({ startedAt }: { startedAt: number }) {
           <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${pct}%` }} />
         )}
       </div>
-      <div className="font-mono text-[0.8rem] text-muted-foreground tabular">{((now - startedAt) / 1000).toFixed(1)} s</div>
+      <div className="font-mono text-meta text-fg-muted tabular">{((now - startedAt) / 1000).toFixed(1)} s</div>
     </motion.div>
   );
 }

@@ -103,6 +103,20 @@
   };
   var QX = 1;
   var ASSET = "f:_assetOrders";
+  /** QX selected, its tree tab shown (a table tab or another contract may be active) and scrolled to the top. */
+  async function showQxTree() {
+    $("[role=option][data-contract='1']").click();
+    var tab = $$("[role=tab]").find(function (e) {
+      return /tree$/.test(e.textContent.trim());
+    });
+    if (tab) tab.click();
+    await until(function () {
+      var t = $("[role=tree]");
+      return t && t.getBoundingClientRect().height > 0 && /QX tree/.test(document.body.innerText);
+    }, "the QX tree is shown");
+    $("[role=tree]").scrollTop = 0;
+    await sleep(250);
+  }
 
   async function main() {
     log("webview e2e: " + navigator.userAgent);
@@ -110,6 +124,9 @@
       var probes = {
         "oklch color": CSS.supports("color", "oklch(0.5 0.1 200)"),
         "color-mix": CSS.supports("background", "color-mix(in oklch, red, blue)"),
+        "color-mix oklab": CSS.supports("background", "color-mix(in oklab, red 20%, blue)"),
+        "font-feature-settings": CSS.supports("font-feature-settings", '"cv11", "ss01", "tnum"'),
+        "font-variant-numeric": CSS.supports("font-variant-numeric", "tabular-nums"),
         "container-type": CSS.supports("container-type", "inline-size"),
         ":has()": CSS.supports("selector(:has(a))"),
         "inset": CSS.supports("inset", "0"),
@@ -128,9 +145,54 @@
         "BigInt": typeof BigInt === "function",
       };
       log("features " + JSON.stringify(probes));
+      check(probes["oklch color"] && probes["color-mix oklab"], "oklch and color-mix are supported");
       var info = await rpc("app.info");
       check(info.transport === "webview", "transport is webview, got " + info.transport);
       log("app.info " + JSON.stringify({ platform: info.platform, version: info.version, transport: info.transport }));
+    });
+
+    await step("bundled fonts render in the webview (Inter Variable + JetBrains Mono Variable, inlined)", async function () {
+      await document.fonts.ready;
+      var faces = [];
+      document.fonts.forEach(function (f) {
+        faces.push(f.family + " " + f.status);
+      });
+      log("font faces: " + faces.join(", "));
+      check(document.fonts.check('15px "Inter Variable"'), "Inter Variable is available");
+      check(document.fonts.check('14px "JetBrains Mono Variable"'), "JetBrains Mono Variable is available");
+      var inline = Array.prototype.slice.call(document.styleSheets).some(function (sh) {
+        try {
+          return Array.prototype.slice.call(sh.cssRules).some(function (r) {
+            return r.type === 5 && /data:font\/woff2|data:application\/font-woff2/.test(r.cssText);
+          });
+        } catch {
+          return false;
+        }
+      });
+      check(inline, "the @font-face rules use inlined data: URIs (no network at runtime)");
+      // a font that did not load would silently fall back: the widths of the probe differ between the real face and the fallback
+      var width = function (family, text) {
+        var el = document.createElement("span");
+        el.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font-size:40px;font-family:" + family;
+        el.textContent = text;
+        document.body.appendChild(el);
+        var w = el.getBoundingClientRect().width;
+        el.remove();
+        return w;
+      };
+      var text = "Illegal 1l|O0 mmmmm WW";
+      var a = width('"Inter Variable", monospace', text);
+      var b = width("monospace", text);
+      var narrow = "iiiiiiiiiiiiiiiiiiii";
+      var c = width('"JetBrains Mono Variable", serif', narrow);
+      var d = width("serif", narrow);
+      log("probe widths inter " + a.toFixed(1) + " vs fallback " + b.toFixed(1) + "; jbm " + c.toFixed(1) + " vs serif " + d.toFixed(1));
+      check(Math.abs(a - b) > 4, "Inter is drawn (not the monospace fallback)");
+      check(Math.abs(c - d) > 4, "JetBrains Mono is drawn (not the serif fallback)");
+      // JetBrains Mono is monospaced: every character 0.6 em wide
+      check(Math.abs(width('"JetBrains Mono Variable", serif', "iiiiiiiiii") - width('"JetBrains Mono Variable", serif', "WWWWWWWWWW")) < 0.5, "JetBrains Mono is monospaced");
+      var cs = getComputedStyle(document.body);
+      log("body font " + cs.fontFamily.slice(0, 60) + " size " + cs.fontSize + " features " + getComputedStyle(document.documentElement).fontFeatureSettings);
     });
 
     var cfg = window.__QSTATE_E2E || {};
@@ -231,7 +293,7 @@
         return $$("[role=option][data-contract]").length === 29;
       }, "29 contracts in the sidebar", 300000);
       var ok = $$("[role=option][data-contract]").filter(function (e) {
-        return /\bok\b/.test(e.innerText);
+        return !!$("[data-status=ok]", e);
       }).length;
       check(ok === 29, "contracts with status ok: " + ok);
       var chip = $("[data-testid=workspace-chip]").innerText;
@@ -272,7 +334,7 @@
       var header = function () {
         return $$("[role=columnheader]").find(function (e) {
           var s = $("span", e);
-          return s && s.innerText.trim() === "priority";
+          return s && s.textContent.trim() === "priority";
         });
       };
       for (var i = 0; i < 3 && header().getAttribute("aria-sort") !== "descending"; i++) {
@@ -390,6 +452,223 @@
         return /Value copied|Copy failed/.test(document.body.innerText);
       }, "copy toast", 5000);
       check(/Value copied/.test(document.body.innerText), "copy toast says: " + (/Copy failed/.test(document.body.innerText) ? "Copy failed" : "?"));
+    });
+
+    await step("UI size setting: Large scales the type and the row heights, then back to Comfortable", async function () {
+      var px = function () {
+        return parseFloat(getComputedStyle(document.documentElement).fontSize);
+      };
+      await showQxTree();
+      var base = px();
+      $("[aria-label='Settings']").click();
+      await until(function () {
+        return $("[role=radiogroup][aria-label='UI size']");
+      }, "settings popover");
+      await shot("09b-settings");
+      var pick = function (name) {
+        $$("[role=radio]")
+          .find(function (r) {
+            return r.textContent.indexOf(name) >= 0;
+          })
+          .click();
+      };
+      pick("Large");
+      await until(function () {
+        return document.documentElement.dataset.uiSize === "large";
+      }, "large applied");
+      check(px() > base * 1.08, "root font grows " + base + " -> " + px());
+      var rowH = function () {
+        var r = $("[role=treeitem]");
+        return r ? r.getBoundingClientRect().height : 0;
+      };
+      var h = rowH();
+      log("Large: root " + px() + " px, tree row " + h + " px");
+      await shot("09c-large");
+      pick("Compact");
+      await until(function () {
+        return document.documentElement.dataset.uiSize === "compact";
+      }, "compact applied");
+      check(px() >= 12, "compact base font stays >= 12 px: " + px());
+      var settings = await rpc("settings.get");
+      pick("Comfortable");
+      await until(function () {
+        return document.documentElement.dataset.uiSize === "comfortable";
+      }, "comfortable applied");
+      await sleep(700);
+      settings = await rpc("settings.get");
+      check(settings.ui.uiSize === "comfortable", "settings.ui.uiSize persisted: " + settings.ui.uiSize);
+      key($("[role=dialog], [data-slot=popover-content]") || document.body, "Escape");
+      document.body.click();
+    });
+
+    await step("context menu: custom menu on a tree row, native menu prevented, Copy and Find work", async function () {
+      await showQxTree();
+      var root = await rpc("state.children", { contract: QX, id: "", limit: 60 });
+      var leaf = root.items.find(function (i) {
+        return i.value && i.value.k === "int" && i.value.v !== "0" && i.value.v.length > 3;
+      });
+      check(leaf, "an integer leaf in the QX root");
+      var row = await until(function () {
+        return treeRow(leaf.id);
+      }, "the integer row");
+      var r = row.el.getBoundingClientRect();
+      var ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 90, clientY: r.top + r.height / 2, button: 2 });
+      var notPrevented = row.el.dispatchEvent(ev);
+      check(!notPrevented, "contextmenu was default-prevented (WebKit's own Back / Forward / Reload menu cannot show)");
+      await until(function () {
+        return $("[data-ctx-menu] [role=menuitem]") && $("[data-ctx-menu]");
+      }, "our menu in the DOM");
+      var items = $$("[data-ctx-menu] [role=menuitem]").map(function (e) {
+        return e.textContent.trim();
+      });
+      log("menu: " + items.join(" | "));
+      check(items.some(function (t) { return /^Copy decimal/.test(t); }) && items.some(function (t) { return /^Find this integer/.test(t); }) && items.some(function (t) { return /^Show bytes/.test(t); }), "integer menu items: " + items.join(", "));
+      check(!items.some(function (t) { return /Back|Forward|Reload$|Stop/.test(t); }), "no WebKit navigation items");
+      await shot("09d-context-menu");
+      byText("[data-ctx-menu] [role=menuitem]", "Copy decimal").click();
+      await until(function () {
+        return /Decimal copied|Copy failed/.test(document.body.innerText);
+      }, "copy toast", 5000);
+      check(/Decimal copied/.test(document.body.innerText), "Copy decimal shows its toast");
+      await until(function () {
+        return !$("[data-ctx-menu]");
+      }, "menu closed after the action");
+      // Find this integer
+      row = treeRow(leaf.id);
+      r = row.el.getBoundingClientRect();
+      row.el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 90, clientY: r.top + r.height / 2, button: 2 }));
+      await until(function () {
+        return byText("[data-ctx-menu] [role=menuitem]", "Find this integer");
+      }, "menu again");
+      byText("[data-ctx-menu] [role=menuitem]", "Find this integer").click();
+      await until(function () {
+        return $("#find-input") && $("#find-input").value === leaf.value.v;
+      }, "find box holds " + leaf.value.v);
+      var api = await rpc("state.search", { contract: QX, query: leaf.value.v, mode: "int", limit: 500 });
+      await until(function () {
+        var m = /([\d,]+)\+?\s*match/.exec(($("[data-testid=find-note]") || {}).innerText || "");
+        return m && num(m[1]) === api.matches.length;
+      }, api.matches.length + " matches for the integer", 20000);
+      await shot("09e-find-from-menu");
+      // Escape closes a menu; an empty area gives the application menu
+      var bar = $("[role=contentinfo]").getBoundingClientRect();
+      $("[role=contentinfo]").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: bar.left + bar.width / 2, clientY: bar.top + 5, button: 2 }));
+      await until(function () {
+        return byText("[data-ctx-menu] [role=menuitem]", "Command palette");
+      }, "application menu");
+      key($("[data-ctx-menu]"), "Escape");
+      await until(function () {
+        return !$("[data-ctx-menu]");
+      }, "menu closed with Escape");
+    });
+
+    await step("scrolling: no skeleton-only viewport, visited rows never turn into placeholders (QX tree, 2M-slot raw _povs)", async function () {
+      await showQxTree();
+      // sampler: row indices that showed data must never be a placeholder later
+      var st = { loaded: {}, violations: 0, maxPh: 0, minRows: 1e9, phNow: 0, rowsNow: 0, on: true };
+      var tree = function () {
+        return $("[role=tree]");
+      };
+      var sample = function () {
+        if (!st.on) return;
+        var box = tree().getBoundingClientRect();
+        var rows = $$("[role=treeitem]").filter(function (r) {
+          var b = r.getBoundingClientRect();
+          return b.bottom > box.top + 1 && b.top < box.bottom - 1;
+        });
+        var ph = 0;
+        rows.forEach(function (r) {
+          var wrap = r.closest("[data-row-index]");
+          var k = wrap && wrap.getAttribute("data-row-index");
+          if (r.hasAttribute("data-placeholder")) {
+            ph++;
+            if (st.loaded[k]) st.violations++;
+          } else if (k) st.loaded[k] = 1;
+        });
+        st.phNow = ph;
+        st.rowsNow = rows.length;
+        st.maxPh = Math.max(st.maxPh, ph);
+        st.minRows = Math.min(st.minRows, rows.length);
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+      var settle = async function (what) {
+        await until(function () {
+          return st.phNow === 0 && st.rowsNow >= 5;
+        }, what + ": no placeholders and rows on screen", 10000);
+      };
+
+      // 1. the QX tree: walk it down and up
+      var t = tree();
+      for (var i = 0; i < 40; i++) {
+        t.scrollTop += 120;
+        await sleep(16);
+      }
+      await settle("QX tree");
+      t.scrollTop = 0;
+      await sleep(100);
+      check(st.phNow === 0 && st.rowsNow >= 5, "QX tree top is populated at once (" + st.rowsNow + " rows, " + st.phNow + " placeholders)");
+
+      // 2. the 2M-slot raw PoV array
+      var asset = await until(function () {
+        return treeRow(ASSET);
+      }, "_assetOrders row");
+      asset.el.click();
+      await until(function () {
+        return $("[aria-label='Show raw members']");
+      }, "raw members switch");
+      $("[aria-label='Show raw members']").click();
+      var povs = await until(function () {
+        return $$("[role=treeitem]").find(function (e) {
+          return /\b_povs\b/.test(e.innerText);
+        });
+      }, "the _povs row in the raw view", 20000);
+      $("[aria-label=Expand]", povs).click();
+      await until(function () {
+        return treeRows() > 2000000;
+      }, "more than 2,000,000 rows", 30000);
+      await settle("raw _povs");
+      log("2M-slot array expanded: " + treeRows() + " rows");
+      await shot("09f-povs-2M");
+      st.loaded = {};
+      st.violations = 0;
+      st.maxPh = 0;
+      st.minRows = 1e9;
+
+      // slow scroll through ~2000 rows
+      t = tree();
+      for (var j = 0; j < 130; j++) {
+        t.scrollTop += 96;
+        await sleep(16);
+      }
+      await settle("slow scroll");
+      var visited = t.scrollTop;
+      check(st.violations === 0, "slow scroll: no loaded row became a placeholder (" + st.violations + ")");
+      check(st.minRows >= 5, "slow scroll: the viewport was never blank (min " + st.minRows + " rows)");
+
+      // scrollbar drag: far jumps
+      var total = t.scrollHeight - t.clientHeight;
+      for (var k = 0; k < 25; k++) {
+        t.scrollTop = Math.floor(total * (((k * 0.6180339) % 1) * 0.98));
+        await sleep(20);
+      }
+      await settle("after the drag");
+      check(st.violations === 0, "drag: no loaded row became a placeholder (" + st.violations + ")");
+      var endTop = t.scrollTop;
+
+      // back to the visited region: instant, no skeleton
+      st.maxPh = 0;
+      t.scrollTop = visited;
+      await sleep(120);
+      check(st.maxPh === 0, "back to the visited range: zero placeholders (max " + st.maxPh + ")");
+      st.maxPh = 0;
+      t.scrollTop = endTop;
+      await sleep(120);
+      check(st.maxPh === 0, "back to the last drag target: zero placeholders (max " + st.maxPh + ")");
+      await shot("09g-scrolled");
+      st.on = false;
+      // restore the logical view for the later steps
+      if ($("[aria-label='Show raw members']")) $("[aria-label='Show raw members']").click();
     });
 
     await step("light theme", async function () {

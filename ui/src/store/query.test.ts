@@ -63,4 +63,38 @@ describe("createQueryFamily", () => {
     q.invalidate();
     expect(q.size()).toBe(0);
   });
+
+  it("retain protects what the viewport shows from LRU eviction", async () => {
+    const q = createQueryFamily<number>(3);
+    await q.fetch("visible", "1", async () => 1);
+    for (let i = 0; i < 6; i++) {
+      q.retain("visible"); // the page loader marks the visible pages on every window change
+      await q.fetch(`other${i}`, "1", async () => i);
+    }
+    expect(q.peek("visible")).toBe(1);
+    expect(q.peek("other0")).toBeUndefined();
+    expect(q.size()).toBe(3);
+  });
+
+  it("without retain the oldest entry is evicted (documents why the loader retains)", async () => {
+    const q = createQueryFamily<number>(3);
+    await q.fetch("visible", "1", async () => 1);
+    for (let i = 0; i < 4; i++) await q.fetch(`other${i}`, "1", async () => i);
+    expect(q.peek("visible")).toBeUndefined();
+  });
+
+  it("serves the previous generation while a new one loads, for every page independently", async () => {
+    const q = createQueryFamily<string>();
+    await q.fetch("page0", "g1", async () => "a0");
+    await q.fetch("page1", "g1", async () => "a1");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const p0 = q.fetch("page0", "g2", async () => { await gate; return "b0"; });
+    expect(q.peek("page0", "g2")).toBe("a0"); // old rows stay
+    expect(q.peek("page1", "g2")).toBe("a1"); // a page not refetched yet is still served
+    release();
+    await p0;
+    expect(q.peek("page0", "g2")).toBe("b0");
+    expect(q.peek("page1", "g2")).toBe("a1");
+  });
 });

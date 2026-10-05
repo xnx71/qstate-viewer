@@ -3,6 +3,7 @@ import { atom } from "jotai";
 import { invoke } from "@/rpc/client";
 import type { Settings } from "@/rpc/contract";
 import { storageGet, storageSet } from "@/lib/safeStorage";
+import { DEFAULT_UI_SIZE, parseUiSize, type UiSize } from "@/lib/sizes";
 import { store } from "./store";
 import { settingsAtom } from "./workspace";
 
@@ -20,6 +21,8 @@ export interface Prefs {
   inspectorTab: "overview" | "type" | "bytes";
   /** Folder the state browser was last used in. */
   browseDir: string;
+  /** UI size: scales type, spacing and row heights. */
+  uiSize: UiSize;
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -29,6 +32,7 @@ export const DEFAULT_PREFS: Prefs = {
   showOffsets: true,
   inspectorTab: "overview",
   browseDir: "",
+  uiSize: DEFAULT_UI_SIZE,
 };
 
 /** Defensive parse of settings.ui (free-form record owned by us, possibly written by older versions). */
@@ -47,6 +51,7 @@ export function parsePrefs(ui: Record<string, unknown> | undefined): Prefs {
   const tab = ui["inspectorTab"];
   if (tab === "overview" || tab === "type" || tab === "bytes") out.inspectorTab = tab;
   if (typeof ui["browseDir"] === "string") out.browseDir = ui["browseDir"];
+  out.uiSize = parseUiSize(ui["uiSize"]);
   return out;
 }
 
@@ -65,19 +70,56 @@ export function resolveTheme(t: Theme): "dark" | "light" {
   return typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-export function applyTheme(t: Theme): void {
+let themeAnimTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** `animate`: a short colour transition (only when the user switches, never on first paint). */
+export function applyTheme(t: Theme, animate = false): void {
   if (typeof document === "undefined") return;
   const resolved = resolveTheme(t);
   const root = document.documentElement;
+  if (animate) {
+    root.classList.add("theme-anim");
+    clearTimeout(themeAnimTimer);
+    themeAnimTimer = setTimeout(() => root.classList.remove("theme-anim"), 320);
+  }
   root.classList.toggle("dark", resolved === "dark");
   root.style.colorScheme = resolved;
+}
+
+// ---- UI size ----------------------------------------------------------------------------------------------------
+
+export function uiSizeFromStorage(): UiSize {
+  return parseUiSize(storageGet("qstate.uiSize"));
+}
+
+/** The size in effect (drives row heights of the virtualized lists). Kept apart from `prefsAtom` so it is readable at first paint. */
+export const uiSizeAtom = atom<UiSize>(uiSizeFromStorage());
+
+export function applyUiSize(size: UiSize): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset["uiSize"] = size;
+}
+
+/** Change the UI size: applied immediately, remembered for the next first paint, persisted in settings.ui. */
+export function setUiSize(size: UiSize): void {
+  store.set(uiSizeAtom, size);
+  storageSet("qstate.uiSize", size);
+  applyUiSize(size);
+  updatePrefs({ uiSize: size });
 }
 
 /** Called after settings.get. */
 export function hydrateFromSettings(s: Settings): void {
   rawUi.current = { ...s.ui };
   store.set(settingsAtom, s);
-  store.set(prefsAtom, parsePrefs(s.ui));
+  const prefs = parsePrefs(s.ui);
+  store.set(prefsAtom, prefs);
+  // settings.ui is the source of truth; the local mirror only avoids a size flash on the next start.
+  const hasSize = s.ui["uiSize"] !== undefined;
+  const size = hasSize ? prefs.uiSize : uiSizeFromStorage();
+  store.set(uiSizeAtom, size);
+  storageSet("qstate.uiSize", size);
+  applyUiSize(size);
   // Dark is the default: a backend-side "system" only wins when the user picked it explicitly in this UI.
   const stored = storageGet("qstate.theme");
   const theme: Theme = s.theme === "system" && stored === null ? "dark" : s.theme === "system" && stored ? (stored as Theme) : s.theme;
@@ -89,7 +131,7 @@ export function hydrateFromSettings(s: Settings): void {
 export function setTheme(t: Theme): void {
   store.set(themeAtom, t);
   storageSet("qstate.theme", t);
-  applyTheme(t);
+  applyTheme(t, true);
   invoke("settings.update", { patch: { theme: t } })
     .then((s) => store.set(settingsAtom, s))
     .catch(() => undefined);

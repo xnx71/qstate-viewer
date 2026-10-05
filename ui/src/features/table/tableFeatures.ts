@@ -26,35 +26,40 @@ export interface WindowRow {
 
 const helper = createColumnHelper<typeof features, WindowRow>();
 
-export function defaultWidth(c: TableColumn): number {
-  if (c.id === "$index") return 84;
-  switch (c.kind) {
-    case "id":
-      return 200;
-    case "int":
-    case "u128":
-      return 150;
-    case "datetime":
-      return 180;
-    case "bool":
-      return 90;
-    case "enum":
-      return 140;
-    case "bytes":
-    case "composite":
-      return 240;
-    default:
-      return 130;
-  }
+/** Default column width in px at UI scale 1 (14 px mono digits are ~8.2 px wide). */
+export function defaultWidth(c: TableColumn, scale = 1): number {
+  const px = (() => {
+    if (c.id === "$index") return 112;
+    switch (c.kind) {
+      case "id":
+        return 250;
+      case "int":
+        return 180;
+      case "u128":
+        return 300;
+      case "datetime":
+        return 224;
+      case "bool":
+        return 110;
+      case "enum":
+        return 170;
+      case "bytes":
+      case "composite":
+        return 280;
+      default:
+        return 150;
+    }
+  })();
+  return Math.round(px * scale);
 }
 
 /** TanStack column definitions for the columns described by the backend. */
-export function buildColumns(columns: TableColumn[]): ColumnDef<typeof features, WindowRow>[] {
+export function buildColumns(columns: TableColumn[], scale = 1): ColumnDef<typeof features, WindowRow>[] {
   return columns.map((c, i) =>
     helper.accessor((r): CellValue | undefined => r.row?.cells[i], {
       id: c.id,
       header: c.label,
-      size: defaultWidth(c),
+      size: defaultWidth(c, scale),
       minSize: 56,
       enableSorting: c.sortable,
       sortDescFirst: false,

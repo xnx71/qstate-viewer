@@ -29,9 +29,9 @@ export function OverviewTab({ contract, node, selectionPath }: { contract: numbe
   return (
     <div>
       <Section title="Node">
-        <div className="mb-2 flex items-center gap-2">
-          <NodeIcon kind={node.kind} className="size-4" />
-          <span className="min-w-0 truncate font-mono text-[1.05rem] font-semibold" title={node.label}>
+        <div className="mb-3 flex items-center gap-2.5">
+          <NodeIcon kind={node.kind} value={node.value} zero={node.zero} className="size-5" />
+          <span className="min-w-0 truncate font-mono text-title font-semibold" title={node.label}>
             {node.label || "state"}
           </span>
           <Badge variant="secondary" className="shrink-0">
@@ -48,14 +48,14 @@ export function OverviewTab({ contract, node, selectionPath }: { contract: numbe
             {fmtOffset(node.offset)} <CopyButton text={offsetBytes} label="Copy offset" />
           </KV>
           <KV k="Size">
-            {fmtCount(node.size)} bytes <span className="text-muted-foreground">({fmtBytes(node.size)})</span>
+            {fmtCount(node.size)} bytes <span className="text-fg-muted">({fmtBytes(node.size)})</span>
           </KV>
           {node.bit && <KV k="Bits">offset {node.bit.offset}, width {node.bit.width}</KV>}
           <KV k="Range">
             0x{node.offset.toString(16)}..0x{(node.offset + Math.max(0, node.size - 1)).toString(16)}{" "}
             <button
               type="button"
-              className="text-primary hover:underline"
+              className="text-brand-text hover:underline"
               onClick={() => store.set(selectedByteAtom, { offset: node.offset, length: node.size })}
             >
               highlight
@@ -66,11 +66,11 @@ export function OverviewTab({ contract, node, selectionPath }: { contract: numbe
 
       {(v || node.preview) && (
         <Section title="Value">
-          {v ? <Value value={v} identity={`insp:${node.id}`} full className="max-w-full flex-wrap" /> : <p className="text-muted-foreground">{node.preview}</p>}
+          {v ? <Value value={v} identity={`insp:${node.id}`} full className="max-w-full flex-wrap" /> : <p className="text-fg-muted">{node.preview}</p>}
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Button
               variant="outline"
-              size="xs"
+              size="sm"
               onClick={() => {
                 void copyText(valueFull).then((ok) => (ok ? toast.success("Value copied", { duration: 1200 }) : toast.error("Copy failed")));
               }}
@@ -111,14 +111,14 @@ export function OverviewTab({ contract, node, selectionPath }: { contract: numbe
 
       {node.container && (
         <Section title="Container">
-          <ContainerBar stats={node.container} wide />
+          <ContainerBar stats={node.container} kind={node.kind} wide />
           <dl className="mt-2">
             <KV k="Capacity">{fmtCount(node.container.capacity)}</KV>
             {node.container.population !== undefined && <KV k="Live">{fmtCount(node.container.population)}</KV>}
             {node.container.removed !== undefined && <KV k="Removed">{fmtCount(node.container.removed)}</KV>}
             {node.container.povs !== undefined && <KV k="PoVs">{fmtCount(node.container.povs)}</KV>}
           </dl>
-          {node.container.warning && <p className="mt-2 rounded-md bg-warn/10 p-2 text-[0.9rem] text-warn">{node.container.warning}</p>}
+          {node.container.warning && <p className="chip mt-2 rounded-lg p-2.5 text-data text-warn">{node.container.warning}</p>}
         </Section>
       )}
 
@@ -130,8 +130,8 @@ export function OverviewTab({ contract, node, selectionPath }: { contract: numbe
           </dl>
           <div className="mt-2 flex flex-wrap items-center gap-3">
             {node.rawChildCount !== undefined && (
-              <label className="flex items-center gap-2 text-[0.92rem]" title="Show the C++ members as laid out in memory instead of the logical content">
-                <Rows3Icon className="size-3.5 text-muted-foreground" />
+              <label className="flex items-center gap-2 text-data" title="Show the C++ members as laid out in memory instead of the logical content">
+                <Rows3Icon className="size-4 text-fg-muted" />
                 Show raw members
                 <Switch
                   size="sm"
@@ -145,7 +145,7 @@ export function OverviewTab({ contract, node, selectionPath }: { contract: numbe
               </label>
             )}
             {node.tabular && (
-              <Button variant="outline" size="xs" onClick={() => openTable(contract, node.id, selectionPath[selectionPath.length - 1]?.label || node.label || "state", node.typeName)}>
+              <Button variant="outline" size="sm" onClick={() => openTable(contract, node.id, selectionPath[selectionPath.length - 1]?.label || node.label || "state", node.typeName)}>
                 <TableIcon /> Open as table
               </Button>
             )}

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   asciiOf,
+  fmtRelative,
+  hexOfDecimal,
+  parseDateText,
+  splitIdentity,
   bytesToHex,
   cellJson,
   cellText,
@@ -149,5 +153,29 @@ describe("leaf rendering to text", () => {
     expect(a).not.toBe(b);
     expect(valueSig(undefined)).toBe("");
     expect(valueSig({ k: "bool", v: true, raw: 1 })).not.toBe(valueSig({ k: "bool", v: true, raw: 2 }));
+  });
+});
+
+
+describe("value display helpers", () => {
+  it("splits an identity into body and checksum tail", () => {
+    expect(splitIdentity("A".repeat(56) + "WXYZ")).toEqual({ body: "A".repeat(56), tail: "WXYZ" });
+  });
+  it("parses node date texts as UTC and rejects non-dates", () => {
+    expect(parseDateText("2026-10-05 09:30:00.250")).toBe(Date.UTC(2026, 9, 5, 9, 30, 0, 250));
+    expect(parseDateText("2026-10-05 09:30:00")).toBe(Date.UTC(2026, 9, 5, 9, 30, 0));
+    expect(parseDateText("unset")).toBeNull();
+  });
+  it("describes dates relative to now", () => {
+    const now = Date.UTC(2026, 9, 5);
+    expect(fmtRelative(now - 3 * 86400_000, now)).toBe("3 days ago");
+    expect(fmtRelative(now + 86400_000, now)).toBe("in 1 day");
+    expect(fmtRelative(now - 5_000, now)).toBe("just now");
+    expect(fmtRelative(now - 400 * 86400_000, now)).toBe("1 year ago");
+  });
+  it("renders integers as fixed width two's complement hex", () => {
+    expect(hexOfDecimal("100", 32, true)).toBe("0x00000064");
+    expect(hexOfDecimal("-1", 64, false)).toBe("0xffffffffffffffff");
+    expect(hexOfDecimal("nope", 8, true)).toBeNull();
   });
 });
