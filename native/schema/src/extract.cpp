@@ -270,7 +270,7 @@ ExtractResult extractSchema(const qstate::cpp::SourceProvider& source, const Ext
     tp = Clock::now();
     qstate::cpp::Diags parseDiags;
     qstate::cpp::ProgramOptions programOptions;
-    programOptions.packRegions = qstate::cpp::packRegionsFromPragmas(pre.pragmas, pre.tokens.size());
+    programOptions.packRegions = qstate::cpp::packRegionsFromPragmas(pre.pragmas, static_cast<std::uint32_t>(pre.tokens.size()));
     std::unique_ptr<qstate::cpp::Program> program =
         qstate::cpp::Program::parse(std::move(pre.tokens), pre.files, parseDiags, programOptions);
     result.stats.parseMs = msSince(tp);

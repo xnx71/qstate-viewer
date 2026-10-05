@@ -1,5 +1,7 @@
 #include "format.h"
 
+#include "int128.h"
+
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -87,7 +89,7 @@ std::string hexNumber(std::uint64_t v, std::uint32_t bits) {
 }
 
 std::string decimal128(std::uint64_t hi, std::uint64_t lo) {
-    __extension__ typedef unsigned __int128 u128;
+    using u128 = wide::u128;
     u128 v = (static_cast<u128>(hi) << 64) | lo;
     if (v == 0) return "0";
     std::string s;

@@ -6,6 +6,7 @@
 
 #include "gather.h"
 #include "impl.h"
+#include "int128.h"
 
 namespace qstate::decode {
 
@@ -13,8 +14,8 @@ using Impl = StateDecoder::Impl;
 
 namespace {
 
-__extension__ typedef __int128 i128;
-__extension__ typedef unsigned __int128 u128t;
+using i128 = wide::i128;
+using u128t = wide::u128;
 
 constexpr std::size_t kMaxColumns = 32;
 constexpr int kMaxDepth = 3;
