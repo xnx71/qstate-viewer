@@ -206,7 +206,7 @@ bootstrap hint; it is never a configure error, and the libraries and their tests
 ## 6. Risks / notes
 
 * Linux is the only verified platform. The Windows / macOS branches (WebView2 / WKWebView libraries in
-  `FindWebviewDeps.cmake`, no signal thread on Windows, `CreateProcess` in `platform_win32.cpp`) compile in principle
+  `FindWebviewDeps.cmake` (downloads the pinned WebView2 headers, or `QSTATE_WEBVIEW2_INCLUDE_DIR`), no signal thread on Windows, `CreateProcess` in `platform_win32.cpp`) compile in principle
   but were never built.
 * WebKitGTK and the vendored webview 0.12.0 are young code: a window can be blank without any error on exotic GPU
   stacks (see the env table). `QSTATE_DEBUG=1` opens the inspector.
