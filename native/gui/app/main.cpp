@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
     const bool selftestMode = envFlag("QSTATE_SELFTEST");
     const std::string scriptFile = envString("QSTATE_SELFTEST_SCRIPT");
     const std::string holdText = envString("QSTATE_SELFTEST_HOLD_MS");
-    const int selftestHoldMs = holdText.empty() ? 0 : std::max(0, std::atoi(holdText.c_str()));
+    const int selftestHoldMs = holdText.empty() ? 0 : (std::max)(0, std::atoi(holdText.c_str()));
 
     // ---- backend -----------------------------------------------------------------------------------------
     rpc::Dispatcher dispatcher(kWorkers);

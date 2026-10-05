@@ -35,6 +35,13 @@ add_executable(qstate-viewer app/main.cpp)
 target_link_libraries(qstate-viewer PRIVATE qstate::gui qstate::webview WebviewDeps::WebviewDeps Threads::Threads)
 qstate_set_warnings(qstate-viewer)
 target_compile_definitions(qstate-viewer PRIVATE QSTATE_VERSION_STRING="${PROJECT_VERSION}")
+if(WIN32)
+    # A GUI program without a console window, but with the ordinary `main` entry point.
+    set_target_properties(qstate-viewer PROPERTIES WIN32_EXECUTABLE TRUE)
+    if(MSVC)
+        target_link_options(qstate-viewer PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+endif()
 install(TARGETS qstate-viewer RUNTIME DESTINATION bin)
 
 # The bridge self test (QSTATE_SELFTEST=1, see docs/HOST.md "Testing") needs an X server: run it under xvfb-run.
