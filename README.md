@@ -1,5 +1,8 @@
 # qstate-viewer
 
+<img width="1919" height="1008" alt="image" src="https://github.com/user-attachments/assets/2e04c247-b15b-4756-9400-3f269ec3acd8" />
+
+
 Desktop viewer for **Qubic smart-contract state files**. Choose a Qubic core version (a tag, a branch, a commit, or
 "auto") and a directory of `contractNNNN.EEE` files (or a single file): the app derives the binary layout of every
 contract state **automatically** by parsing the core's own C++ headers (own preprocessor, declaration parser, constant
