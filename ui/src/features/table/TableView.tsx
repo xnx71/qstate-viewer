@@ -34,6 +34,7 @@ import { cellText, fmtCount, fmtDuration } from "@/lib/format";
 import { copyText } from "@/lib/clipboard";
 import type { ScrollDir } from "@/lib/pageWindow";
 import { rowPx, UI_SIZES } from "@/lib/sizes";
+import { useRowSlots } from "@/lib/useRowSlots";
 import { useScaledVirtualizer } from "@/lib/useScaledVirtualizer";
 import { columnTypeKey, VALUE_TYPES } from "@/features/values/typeMeta";
 import { uiSizeAtom } from "@/store/prefs";
@@ -104,6 +105,7 @@ export function TableView({ target }: { target: TableTarget }) {
   const win = useTableWindow({ contract: target.contract, id: target.id, query, range, direction, maxRows: info.data?.totalRows ?? 0, enabled: !!info.data });
   const count = win.total ?? (ui.filters.length ? 0 : (info.data?.totalRows ?? 0));
   const sv = useScaledVirtualizer({ count, rowHeight: ROW_H, scrollRef, overscan: 6, headerHeight: HEADER_H });
+  const slotOf = useRowSlots(sv.rows.length);
 
   useEffect(() => {
     setRange((r) => (r.start === sv.visible.start && r.end === sv.visible.end ? r : { start: sv.visible.start, end: sv.visible.end }));
@@ -480,7 +482,7 @@ export function TableView({ target }: { target: TableTarget }) {
               const selected = !!wr.row && wr.row.id === selectedId;
               return (
                 <div
-                  key={row.id}
+                  key={slotOf(wr.index)}
                   role="row"
                   data-row-index={wr.index}
                   aria-rowindex={wr.index + 1}
@@ -502,7 +504,7 @@ export function TableView({ target }: { target: TableTarget }) {
                     const isActive = active?.index === wr.index && active.col === cell.column.id;
                     return (
                       <div
-                        key={cell.id}
+                        key={cell.column.id}
                         role="gridcell"
                         data-col={cell.column.id}
                         data-kbd-focus={isActive ? "" : undefined}

@@ -1,6 +1,7 @@
 #include "qstate/gui/assets.h"
 #include "qstate/gui/bridge.h"
 #include "qstate/gui/event_pump.h"
+#include "qstate/gui/memory.h"
 #include "qstate/gui/selftest.h"
 #include "qstate/rpc/framing.h"
 
@@ -178,4 +179,28 @@ TEST_CASE("embedded assets") {
     if (gui::embeddedIndexIsPlaceholder()) {
         CHECK(index.find("placeholder") != std::string_view::npos);
     }
+}
+
+TEST_CASE("idle trigger fires once per idle period") {
+    using namespace std::chrono_literals;
+    const auto t0 = gui::IdleTrigger::Clock::now();
+    gui::IdleTrigger idle(60s, t0);
+    CHECK_FALSE(idle.due(t0 + 59s));
+    CHECK(idle.due(t0 + 60s));
+    CHECK_FALSE(idle.due(t0 + 61s));   // once
+    CHECK_FALSE(idle.due(t0 + 3600s)); // still disarmed
+    idle.activity(t0 + 100s);          // a request re-arms it
+    CHECK_FALSE(idle.due(t0 + 159s));
+    CHECK(idle.due(t0 + 160s));
+    idle.activity(t0 + 200s);
+    idle.activity(t0 + 230s); // later activity moves the deadline
+    CHECK_FALSE(idle.due(t0 + 260s));
+    CHECK(idle.due(t0 + 290s));
+}
+
+TEST_CASE("allocator tuning is harmless") {
+    // glibc only changes malloc parameters; elsewhere it is a no-op. Allocation still works afterwards.
+    gui::tuneAllocator();
+    std::vector<char> big(8u << 20, 1);
+    CHECK(big.back() == 1);
 }

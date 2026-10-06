@@ -13,16 +13,22 @@ import type {
   TypeId,
   TypeInfo,
 } from "@/rpc/contract";
+import { dedupeStrings } from "@/lib/dedupeStrings";
 import { createQueryFamily, useQuery, type QueryResult } from "./query";
 import { contractAtomFamily, workspaceIdAtom } from "./workspace";
 import { store } from "./store";
 
-export const nodeQ = createQueryFamily<NodeInfo>(800);
-export const childrenQ = createQueryFamily<ChildrenPage>(800);
-export const typeQ = createQueryFamily<TypeInfo>(2000);
-export const bytesQ = createQueryFamily<BytesBlock>(600);
-export const tableInfoQ = createQueryFamily<TableInfo>(50);
-export const tablePageQ = createQueryFamily<TablePage>(600);
+const MB = 1024 * 1024;
+
+// Every cache is bounded by entry count AND by estimated bytes (docs/MEMORY.md): a page of 200 tree nodes is ~100 KB, a
+// 100-row block of a 19-column table ~500 KB, so one entry-count cap for both was a ~300 MB ceiling. The budgets below are
+// what the viewport needs plus generous history (the page loader keeps what is on screen and the prefetch window hot).
+export const nodeQ = createQueryFamily<NodeInfo>({ name: "node", compact: dedupeStrings, maxEntries: 800, maxBytes: 2 * MB });
+export const childrenQ = createQueryFamily<ChildrenPage>({ name: "children", compact: dedupeStrings, maxEntries: 400, maxBytes: 16 * MB });
+export const typeQ = createQueryFamily<TypeInfo>({ name: "type", compact: dedupeStrings, maxEntries: 2000, maxBytes: 4 * MB });
+export const bytesQ = createQueryFamily<BytesBlock>({ name: "bytes", maxEntries: 600, maxBytes: 3 * MB });
+export const tableInfoQ = createQueryFamily<TableInfo>({ name: "tableInfo", compact: dedupeStrings, maxEntries: 50, maxBytes: 1 * MB });
+export const tablePageQ = createQueryFamily<TablePage>({ name: "tablePage", compact: dedupeStrings, maxEntries: 400, maxBytes: 24 * MB });
 
 export interface BytesBlock {
   offset: number;
@@ -160,6 +166,13 @@ function loadType(wsId: number, id: TypeId): Promise<TypeInfo> {
 export function useTypeInfo(typeId: TypeId | null | undefined): QueryResult<TypeInfo> {
   const wsId = useAtomValue(workspaceIdAtom);
   return useQuery(typeQ, typeId == null ? null : `t|${typeId}`, String(wsId), () => loadType(wsId, typeId as TypeId));
+}
+
+/** A table tab was closed: its pages and description are not needed any more. */
+export function dropTableCaches(contract: number, id: NodeId): void {
+  const prefix = `tp|[${contract},${JSON.stringify(id)},`; // see querySignature()
+  tablePageQ.invalidate((base) => base.startsWith(prefix));
+  tableInfoQ.invalidate((base) => base.startsWith(`ti|${contract}|${id}|`));
 }
 
 /** Clear every cache (workspace replaced). */

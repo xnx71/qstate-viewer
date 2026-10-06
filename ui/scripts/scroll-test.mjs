@@ -1,4 +1,4 @@
-// Scroll behaviour test (headless Chrome, mock backend, dist/index.html): rows that were loaded must never turn back
+// Scroll behaviour test (headless Chrome, mock backend, dist-mock/index.html): rows that were loaded must never turn back
 // into placeholders while scrolling, jumping, refetching or re-sorting, and visited ranges are skeleton free.
 // Usage: node scripts/scroll-test.mjs [--url=...]   (exit code 1 on failure)
 import { existsSync } from "node:fs";
@@ -8,10 +8,10 @@ import { bootWorkspace, clickText, expandRow, launch, sleep, waitFor, watchError
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const arg = process.argv.find((a) => a.startsWith("--url="));
-const dist = path.resolve(here, "../dist/index.html");
+const dist = path.resolve(here, "../dist-mock/index.html");
 const url = arg ? arg.slice(6) : pathToFileURL(dist).href;
 if (!arg && !existsSync(dist)) {
-  console.error("dist/index.html missing: run `pnpm build` first");
+  console.error("dist-mock/index.html missing: run `pnpm build` first");
   process.exit(2);
 }
 
@@ -149,6 +149,13 @@ try {
   await sleep(90);
   s = await stats(page);
   check("... and the top of the list", s.maxPh === 0, `max ${s.maxPh}`);
+
+  // the caches are trimmed behind the views' backs (hidden window, docs/MEMORY.md): the loader must fetch the visible pages again
+  await page.evaluate(() => window.__qstate_debug.trim(0));
+  const back = await settle(page, 5000);
+  s = await stats(page);
+  check("after every cache was trimmed the visible tree rows come back (the loader re-requests)", back && s.phNow === 0 && s.rowsNow >= 5, `${s.phNow} placeholders, ${s.rowsNow} rows`);
+  await resetMax(page);
 
   // ---- 2. live update: rows stay while the new generation loads ------------------------------------------------------
   await scrollTo(page, "[role=tree]", visitedTop);

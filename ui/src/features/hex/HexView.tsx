@@ -6,6 +6,8 @@ import { RpcErrorView } from "@/components/common/RpcErrorView";
 import { Button } from "@/components/ui/button";
 import { asciiOf, fmtCount, fmtHexOffset, hexToBytes, parseOffset } from "@/lib/format";
 import { rowPx } from "@/lib/sizes";
+import { byteOfHexChar, HEX_CHARS, hexHeader } from "@/lib/hexLayout";
+import { useRowSlots } from "@/lib/useRowSlots";
 import { useScaledVirtualizer } from "@/lib/useScaledVirtualizer";
 import { uiSizeAtom } from "@/store/prefs";
 import { cn } from "@/lib/utils";
@@ -20,6 +22,41 @@ import { gotoOffset } from "@/store/search";
 
 const COLS = 16;
 const BLOCK_ROWS = BYTES_BLOCK / COLS;
+
+// A row is TWO text runs, not 32 one-character elements: the hex column and the ASCII column are strings, split into a
+// <span> only where the look changes (zero byte / other byte / selection). 35 elements per row and 40 rows were rebuilt on
+// every jump of the scrollbar; the DOM garbage that produced (Blink's heap collects lazily) made the hex view the phase with
+// the biggest renderer peak (docs/MEMORY.md). Monospace font: the hover maps x to a byte with plain arithmetic.
+const HEX2: string[] = Array.from({ length: 256 }, (_, n) => n.toString(16).padStart(2, "0"));
+const MISSING = 0;
+const ZERO = 1;
+const OTHER = 2;
+const SELECTED = 3;
+const EDGE = 4;
+const HEX_CLASS = ["text-fg-subtle/40", "text-fg-subtle", "text-fg", "bg-sel text-fg shadow-[inset_0_-2px_0_var(--sel-edge)]", "rounded-l-sm bg-sel-edge text-brand-fg"];
+const ASCII_CLASS = ["", "text-fg-subtle", "text-t-bytes", "bg-sel text-fg", "bg-sel text-fg"];
+
+function kindOf(b: number | undefined, inSel: boolean, edge: boolean): number {
+  return edge ? EDGE : inSel ? SELECTED : b === undefined ? MISSING : b === 0 ? ZERO : OTHER;
+}
+
+/** Consecutive bytes of the same look share one span. */
+function runs(kinds: number[], texts: string[], classes: string[]): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  while (i < kinds.length) {
+    let j = i + 1;
+    let text = texts[i];
+    while (j < kinds.length && kinds[j] === kinds[i] && kinds[i] !== EDGE) text += texts[j++];
+    out.push(
+      <span key={out.length} className={classes[kinds[i]] || undefined}>
+        {text}
+      </span>,
+    );
+    i = j;
+  }
+  return out;
+}
 
 const bytesCache = new WeakMap<BytesBlock, Uint8Array>();
 function blockBytes(b: BytesBlock): Uint8Array {
@@ -42,49 +79,42 @@ const HexRow = memo(function HexRow({ contract, row, range, onHover }: RowProps)
   const bytes = q.data ? blockBytes(q.data) : undefined;
   const base = row * COLS;
   const local = base - block * BYTES_BLOCK;
-  const cells: React.ReactNode[] = [];
-  const ascii: React.ReactNode[] = [];
+  const kinds: number[] = [];
+  const hexTexts: string[] = [];
+  const asciiKinds: number[] = [];
+  const asciiTexts: string[] = [];
+  const placeholder = q.loading || q.data === undefined ? "··" : "  ";
   for (let i = 0; i < COLS; i++) {
     const off = base + i;
     const b = bytes && local + i < bytes.length ? bytes[local + i] : undefined;
     const inSel = range !== null && off >= range.start && off < range.end;
-    const edgeStart = inSel && off === range.start;
-    cells.push(
-      <span
-        key={i}
-        data-off={off}
-        className={cn(
-          "inline-block w-[2ch] text-center",
-          i === 8 && "ml-2",
-          i > 0 && i !== 8 && "ml-[0.6ch]",
-          b === undefined && "text-fg-subtle/40",
-          b === 0 && "text-fg-subtle",
-          b !== undefined && b !== 0 && "text-fg",
-          inSel && "bg-sel text-fg shadow-[inset_0_-2px_0_var(--sel-edge)]",
-          edgeStart && "rounded-l-sm bg-sel-edge text-brand-fg shadow-none",
-        )}
-      >
-        {b === undefined ? (q.loading || q.data === undefined ? "··" : "  ") : b.toString(16).padStart(2, "0")}
-      </span>,
-    );
-    ascii.push(
-      <span key={i} className={cn("inline-block w-[1ch]", b === 0 ? "text-fg-subtle" : "text-t-bytes", inSel && "bg-sel text-fg")}>
-        {b === undefined ? " " : asciiOf(b)}
-      </span>,
-    );
+    kinds.push(kindOf(b, inSel, inSel && off === range.start));
+    hexTexts.push((b === undefined ? placeholder : HEX2[b]) + (i === 7 ? "  " : i < COLS - 1 ? " " : ""));
+    asciiKinds.push(inSel ? SELECTED : b === undefined ? MISSING : b === 0 ? ZERO : OTHER);
+    asciiTexts.push(b === undefined ? " " : asciiOf(b));
   }
   return (
     <div
       className="flex h-full items-center gap-4 px-3 font-mono text-hex whitespace-pre hover:bg-hover"
       onMouseMove={(e) => {
-        const t = (e.target as HTMLElement).dataset["off"];
-        onHover(t !== undefined ? Number(t) : null);
+        const el = e.target as HTMLElement;
+        const col = el.closest<HTMLElement>("[data-col]");
+        if (!col) return onHover(null);
+        const rect = col.getBoundingClientRect();
+        const isHex = col.dataset["col"] === "hex";
+        const ch = rect.width / (isHex ? HEX_CHARS : COLS);
+        const c = Math.floor((e.clientX - rect.left) / ch);
+        onHover(base + (isHex ? byteOfHexChar(c) : Math.max(0, Math.min(COLS - 1, c))));
       }}
       onMouseLeave={() => onHover(null)}
     >
       <span className="w-[8ch] shrink-0 text-fg-muted">{base.toString(16).padStart(8, "0")}</span>
-      <span className="shrink-0">{cells}</span>
-      <span className="shrink-0">{ascii}</span>
+      <span className="shrink-0" data-col="hex">
+        {runs(kinds, hexTexts, HEX_CLASS)}
+      </span>
+      <span className="shrink-0" data-col="ascii">
+        {runs(asciiKinds, asciiTexts, ASCII_CLASS)}
+      </span>
     </div>
   );
 });
@@ -138,6 +168,7 @@ export function HexView({ contract, range, className }: Props) {
   const ROW_H = rowPx("hex", useAtomValue(uiSizeAtom));
   const scrollRef = useRef<HTMLDivElement>(null);
   const sv = useScaledVirtualizer({ count: rows, rowHeight: ROW_H, scrollRef, overscan: 6 });
+  const slotOf = useRowSlots(sv.rows.length);
   const [hover, setHover] = useState<number | null>(null);
   const [jump, setJump] = useAtom(hexJumpAtom);
   const override = useAtomValue(selectedByteAtom);
@@ -215,19 +246,15 @@ export function HexView({ contract, range, className }: Props) {
           <CornerDownRightIcon /> Go
         </Button>
       </div>
-      <div className="border-b px-3 py-1.5 font-mono text-hex text-fg-muted" aria-hidden>
+      <div className="border-b px-3 py-1.5 font-mono text-hex whitespace-pre text-fg-muted" aria-hidden>
         <span className="mr-4 inline-block w-[8ch]">offset</span>
-        {Array.from({ length: COLS }, (_, i) => (
-          <span key={i} className={cn("inline-block w-[2ch] text-center", i === 8 && "ml-2", i > 0 && i !== 8 && "ml-[0.6ch]")}>
-            {i.toString(16).padStart(2, "0")}
-          </span>
-        ))}
+        <span>{hexHeader()}</span>
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto bg-surface-1" role="region" aria-label="Hex dump" tabIndex={0} {...ctx}>
         <div style={{ height: sv.scrollHeight, position: "relative", minWidth: "fit-content" }}>
           {rows === 0 && !first.loading && <div className="p-4 text-center text-fg-muted">Empty file</div>}
           {sv.rows.map((r) => (
-            <div key={r.index} style={{ position: "absolute", top: 0, left: 0, right: 0, height: ROW_H, transform: `translateY(${r.y}px)` }}>
+            <div key={slotOf(r.index)} style={{ position: "absolute", top: 0, left: 0, right: 0, height: ROW_H, transform: `translateY(${r.y}px)` }}>
               <HexRow contract={contract} row={r.index} range={span} onHover={setHover} />
             </div>
           ))}

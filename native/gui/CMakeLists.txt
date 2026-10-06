@@ -15,6 +15,14 @@ qstate_embed_file(qstate_gui
 
 qstate_add_tests(gui)
 
+# Measurement tool (docs/MEMORY.md): the real service behind a line protocol on stdin / stdout, for ui/scripts/memory.mjs.
+option(QSTATE_BUILD_MEMORY_BRIDGE "Build qstate-memory-bridge, the headless service used by ui/scripts/memory.mjs" OFF)
+if(QSTATE_BUILD_MEMORY_BRIDGE)
+    add_executable(qstate-memory-bridge tools/memory_bridge.cpp)
+    target_link_libraries(qstate-memory-bridge PRIVATE qstate::gui Threads::Threads)
+    qstate_set_warnings(qstate-memory-bridge)
+endif()
+
 # vendored webview/webview (header only), see native/third_party/README.md
 add_library(qstate_webview INTERFACE)
 add_library(qstate::webview ALIAS qstate_webview)

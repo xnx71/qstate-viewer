@@ -73,7 +73,7 @@ HTTP or TLS code of its own, never a shell, never a credentials prompt. Details:
 cmake -S . -B build -DQSTATE_TEST_CORE_REPO=<git clone of the core with tags> -DQSTATE_TEST_STATE_DIR=<epoch 229 files> \
       -DQSTATE_TEST_CORE_DIR_229=<plain snapshot of core v1.303.2>
 cmake --build build -j && ctest --test-dir build --output-on-failure
-(cd ui && pnpm typecheck && pnpm lint && pnpm test && pnpm smoke)
+(cd ui && pnpm typecheck && pnpm lint && pnpm test && pnpm smoke && pnpm scroll-test && pnpm test:memory)
 scripts/webview-e2e.sh --build-dir build --repo <core clone> --ref auto --state <epoch 229 files>   # real webview
 ```
 
@@ -93,6 +93,7 @@ has been compiled with MSVC only partially.
 | [docs/SPEC.md](docs/SPEC.md) | architecture, module layout, conventions |
 | [docs/SERVICE.md](docs/SERVICE.md) | RPC service: core sources from git, workspace lifecycle, events, threading |
 | [docs/HOST.md](docs/HOST.md) | webview host, bridge, test hooks, sysroot bootstrap, payload limits |
+| [docs/MEMORY.md](docs/MEMORY.md) | where the memory went, the fixes, budgets, how to measure it again |
 | [ui/src/rpc/contract.ts](ui/src/rpc/contract.ts) | the UI <-> native RPC contract |
 | [docs/research/](docs/research/) | layout rules, container decode algorithms, proposal types, file/digest formats, reference decoders, validation data |
 

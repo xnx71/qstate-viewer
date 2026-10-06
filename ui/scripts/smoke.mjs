@@ -1,4 +1,4 @@
-// E2E smoke test: drives the BUILT page (dist/index.html via file://, or --url=...) with the mock backend:
+// E2E smoke test: drives the BUILT page (dist-mock/index.html via file://, or --url=...) with the mock backend:
 // open workspace (sync, pick a tag, browse to a folder) -> expand a node -> open table -> sort -> filter -> search, asserting no console errors.
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -7,10 +7,10 @@ import { clickText, gotoFolder, launch, openWorkspace, sleep, typeInto, chooseFo
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const arg = process.argv.find((a) => a.startsWith("--url="));
-const dist = path.resolve(here, "../dist/index.html");
+const dist = path.resolve(here, "../dist-mock/index.html");
 const url = arg ? arg.slice(6) : pathToFileURL(dist).href;
 if (!arg && !existsSync(dist)) {
-  console.error("dist/index.html missing: run `pnpm build` first");
+  console.error("dist-mock/index.html missing: run `pnpm build` first");
   process.exit(2);
 }
 

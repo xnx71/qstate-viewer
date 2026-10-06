@@ -16,7 +16,7 @@ namespace qstate::decode {
 // "<scope>|<generation>|" so that invalidateScope() can drop everything of one decoder.
 class DecodeCache {
 public:
-    static constexpr std::size_t kDefaultCapacity = 256u << 20;
+    static constexpr std::size_t kDefaultCapacity = 128u << 20;
 
     explicit DecodeCache(std::size_t capacityBytes = kDefaultCapacity) : capacity_(capacityBytes) {}
 

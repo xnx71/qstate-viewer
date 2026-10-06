@@ -9,9 +9,19 @@ import { createWebviewTransport, hasWebviewBridge } from "./transports/webview";
 const hub = new EventHub();
 let transport: Transport | null = null;
 
-/** The native webview bridge when present, otherwise the in-memory mock (plain browser, `pnpm dev`). */
+/** Without a bridge and without the mock (production build opened in a plain browser): every call fails with this error. */
+function missingBridgeTransport(): Transport {
+  const fail = () => Promise.reject({ code: "internal", message: "this build has no native bridge (open it with qstate-viewer, or use `pnpm dev`)" });
+  return { name: "webview", invoke: fail as Transport["invoke"], connect: () => undefined };
+}
+
+/**
+ * The native webview bridge when present, otherwise the in-memory mock (plain browser, `pnpm dev`, the headless tests). The
+ * production build defines __QSTATE_MOCK__ as false, so the whole mock backend is removed from it by tree shaking.
+ */
 function selectTransport(): Transport {
-  return hasWebviewBridge() ? createWebviewTransport() : createMockTransport();
+  if (hasWebviewBridge()) return createWebviewTransport();
+  return __QSTATE_MOCK__ ? createMockTransport() : missingBridgeTransport();
 }
 
 export function getTransport(): Transport {

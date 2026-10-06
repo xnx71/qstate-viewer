@@ -132,8 +132,9 @@ entries are dropped.
 * Handlers run on the dispatcher's pool threads and are re-entrant. Each handler takes a `shared_ptr<Workspace>`
   snapshot (`WorkspaceManager::require()`), so a reload during a call is harmless.
 * Per-contract state (file info, reader, decoder, generation) sits behind one mutex inside the workspace; decoders are
-  created lazily on first use and share one `decode::DecodeCache` (`ServiceConfig::decodeCacheBytes`, default 256 MB,
-  entries are scoped per decoder instance and dropped when the decoder dies or the generation changes).
+  created lazily on first use and share one `decode::DecodeCache` (`ServiceConfig::decodeCacheBytes`, default 128 MB,
+  entries are scoped per decoder instance and dropped when the decoder dies or the generation changes;
+  `Service::trimMemory()` drops it and returns free heap memory, see docs/MEMORY.md).
   `Query.generation` is the contract's generation at the time of the call.
 * `open` / `reload` / the watcher's rescan each take a ticket; a newer ticket (another open, reload, close) sets the
   cancel flag of the older attempt, which then throws `rpc::Cancelled` ("cancelled") and is never installed.

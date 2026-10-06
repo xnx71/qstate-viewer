@@ -9,7 +9,7 @@ import { chooseFolder, clickText, expandRow, gotoFolder, launch, openWorkspace, 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const out = process.argv[2];
 const opt = (k) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
-const dist = path.resolve(here, "../dist/index.html");
+const dist = path.resolve(here, "../dist-mock/index.html");
 const mode = opt("mode") ?? (opt("url") ? "url" : "file");
 const prefix = opt("prefix") ?? mode;
 const [vw, vh] = (opt("size") ?? "1500x900").split("x").map(Number);

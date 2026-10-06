@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { rowPx } from "@/lib/sizes";
+import { useRowSlots } from "@/lib/useRowSlots";
 import { useScaledVirtualizer } from "@/lib/useScaledVirtualizer";
 import type { NodeInfo } from "@/rpc/contract";
 import { usePageLoader, type LoaderPage } from "@/lib/usePageLoader";
@@ -43,6 +44,7 @@ export function TreeExplorer({ contract }: { contract: number }) {
   const count = rowCount(tree.root);
   const ROW_H = rowPx("tree", useAtomValue(uiSizeAtom));
   const sv = useScaledVirtualizer({ count, rowHeight: ROW_H, scrollRef, overscan: 10 });
+  const slotOf = useRowSlots(sv.rows.length);
   // rows that appear because a node was just expanded fade in (staggered); a short burst, never during scrolling
   const [burst, setBurst] = useState<{ from: number; to: number; at: number } | null>(null);
   const [focusRow, setFocusRow] = useState(0);
@@ -304,7 +306,7 @@ export function TreeExplorer({ contract }: { contract: number }) {
         <div style={{ height: sv.scrollHeight, position: "relative" }}>
           {rows.map(({ r, ref }) =>
             ref ? (
-              <div key={r.index} data-row-index={r.index} style={{ position: "absolute", top: 0, left: 0, right: 0, height: ROW_H, transform: `translateY(${r.y}px)` }}>
+              <div key={slotOf(r.index)} data-row-index={r.index} style={{ position: "absolute", top: 0, left: 0, right: 0, height: ROW_H, transform: `translateY(${r.y}px)` }}>
                 <TreeRow
                   contract={contract}
                   parentId={ref.parent ? ref.parent.id : null}

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createQueryFamily } from "./query";
+import { createQueryFamily, queryFamilies, trimAllQueries } from "./query";
 import { store } from "./store";
 
 describe("createQueryFamily", () => {
@@ -11,7 +11,7 @@ describe("createQueryFamily", () => {
     await q.fetch("k", "1", fetcher);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(q.has("k", "1")).toBe(true);
-    expect(store.get(q.atomFor("k@1"))).toEqual({ status: "ready", data: 42 });
+    expect(store.get(q.atomFor("k", "1"))).toEqual({ status: "ready", data: 42 });
   });
 
   it("a new version refetches but keeps the previous data available as stale", async () => {
@@ -30,11 +30,11 @@ describe("createQueryFamily", () => {
   it("records errors in the atom and rejects", async () => {
     const q = createQueryFamily<number>();
     await expect(q.fetch("e", "1", async () => Promise.reject({ code: "not_found", message: "gone" }))).rejects.toBeDefined();
-    const st = store.get(q.atomFor("e@1"));
+    const st = store.get(q.atomFor("e", "1"));
     expect(st.status).toBe("error");
     expect(st.error?.code).toBe("not_found");
     // an errored key can be retried after resetting it
-    store.set(q.atomFor("e@1"), { status: "idle" });
+    store.set(q.atomFor("e", "1"), { status: "idle" });
     await expect(q.fetch("e", "1", async () => 7)).resolves.toBe(7);
   });
 
@@ -42,7 +42,7 @@ describe("createQueryFamily", () => {
     const q = createQueryFamily<number>();
     const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
     await expect(q.fetch("a", "1", async () => Promise.reject(abort))).rejects.toBe(abort);
-    expect(store.get(q.atomFor("a@1")).status).toBe("idle");
+    expect(store.get(q.atomFor("a", "1")).status).toBe("idle");
   });
 
   it("evicts the oldest entries beyond the cap", async () => {
@@ -96,5 +96,112 @@ describe("createQueryFamily", () => {
     await p0;
     expect(q.peek("page0", "g2")).toBe("b0");
     expect(q.peek("page1", "g2")).toBe("a1");
+  });
+
+  describe("memory bounds", () => {
+    const page = (n: number) => "x".repeat(n);
+    const sizeOf = (d: string) => d.length;
+
+    it("evicts the least recently used entries when the byte budget is exceeded", async () => {
+      const q = createQueryFamily<string>({ maxBytes: 1000, sizeOf });
+      for (let i = 0; i < 5; i++) await q.fetch(`k${i}`, "1", async () => page(300));
+      expect(q.bytes()).toBeLessThanOrEqual(1000);
+      expect(q.size()).toBe(3);
+      expect(q.peek("k0")).toBeUndefined();
+      expect(q.peek("k1")).toBeUndefined();
+      expect(q.peek("k4")).toBeDefined();
+    });
+
+    it("an entry bigger than the whole budget is still served (never an empty cache)", async () => {
+      const q = createQueryFamily<string>({ maxBytes: 100, sizeOf });
+      await expect(q.fetch("big", "1", async () => page(500))).resolves.toHaveLength(500);
+      expect(q.peek("big")).toHaveLength(500);
+      await q.fetch("big2", "1", async () => page(500));
+      expect(q.size()).toBe(1);
+      expect(q.peek("big")).toBeUndefined();
+    });
+
+    it("retain keeps what the viewport shows when the budget forces eviction", async () => {
+      const q = createQueryFamily<string>({ maxBytes: 1000, sizeOf });
+      await q.fetch("visible", "1", async () => page(300));
+      for (let i = 0; i < 8; i++) {
+        q.retain("visible");
+        await q.fetch(`other${i}`, "1", async () => page(300));
+      }
+      expect(q.peek("visible")).toBeDefined();
+      expect(q.bytes()).toBeLessThanOrEqual(1000);
+    });
+
+    it("bytes are given back when entries are invalidated", async () => {
+      const q = createQueryFamily<string>({ sizeOf });
+      await q.fetch("a|1", "1", async () => page(100));
+      await q.fetch("b|1", "1", async () => page(200));
+      expect(q.bytes()).toBe(300);
+      q.invalidate((b) => b.startsWith("a|"));
+      expect(q.bytes()).toBe(200);
+      q.invalidate();
+      expect(q.bytes()).toBe(0);
+      expect(q.size()).toBe(0);
+    });
+
+    it("only the newest generation of a base stays cached", async () => {
+      const q = createQueryFamily<string>({ sizeOf });
+      await q.fetch("p", "g1", async () => page(100));
+      expect(q.bytes()).toBe(100);
+      for (let g = 2; g <= 6; g++) await q.fetch("p", `g${g}`, async () => page(100));
+      expect(q.size()).toBe(1);
+      expect(q.bytes()).toBe(100);
+      expect(q.has("p", "g1")).toBe(false);
+      expect(q.has("p", "g6")).toBe(true);
+    });
+
+    it("reading (has / peek) never creates atoms; atoms of looked-at keys are evicted like entries", async () => {
+      const q = createQueryFamily<string>({ maxEntries: 5, sizeOf });
+      for (let i = 0; i < 100; i++) {
+        expect(q.has(`never${i}`, "1")).toBe(false);
+        expect(q.peek(`never${i}`, "1")).toBeUndefined();
+      }
+      expect(q.size()).toBe(0);
+      // a component that only subscribes (the page loader fetches) while scrolling over many pages
+      for (let i = 0; i < 100; i++) q.atomFor(`row${i}`, "1");
+      expect(q.size()).toBe(5);
+    });
+
+    it("trim shrinks to a fraction of the budget and keeps the newest", async () => {
+      const q = createQueryFamily<string>({ maxBytes: 1000, sizeOf });
+      for (let i = 0; i < 10; i++) await q.fetch(`k${i}`, "1", async () => page(100));
+      expect(q.bytes()).toBe(1000);
+      q.trim(0.3);
+      expect(q.bytes()).toBeLessThanOrEqual(300);
+      expect(q.peek("k9")).toBeDefined();
+      expect(q.peek("k0")).toBeUndefined();
+      q.trim(0);
+      expect(q.size()).toBeLessThanOrEqual(1);
+    });
+
+    it("an answer that arrives after its entry was evicted is returned but not cached", async () => {
+      const q = createQueryFamily<string>({ maxEntries: 2, sizeOf });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const slow = q.fetch("slow", "1", async () => {
+        await gate;
+        return page(50);
+      });
+      await q.fetch("a", "1", async () => page(1));
+      await q.fetch("b", "1", async () => page(1)); // evicts "slow" (oldest, still loading)
+      release();
+      await expect(slow).resolves.toHaveLength(50);
+      expect(q.peek("slow")).toBeUndefined();
+      expect(q.bytes()).toBe(2);
+    });
+
+    it("named families are registered and trimmed together", async () => {
+      const q = createQueryFamily<string>({ name: "test-trim", maxBytes: 1000, sizeOf });
+      await q.fetch("a", "1", async () => page(400));
+      await q.fetch("b", "1", async () => page(400));
+      expect(queryFamilies().get("test-trim")).toBeDefined();
+      trimAllQueries(0.5);
+      expect(q.bytes()).toBeLessThanOrEqual(500);
+    });
   });
 });

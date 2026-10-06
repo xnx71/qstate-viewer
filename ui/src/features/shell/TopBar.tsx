@@ -43,7 +43,7 @@ function IconTip({ label, kbd, children }: { label: string; kbd?: string; childr
   );
 }
 
-function MockMenu() {
+function MockMenuImpl() {
   const mock = getMockTransport();
   const [live, setLive] = useState(mock?.backend.isLive() ?? false);
   useEffect(() => mock?.backend.onLiveChange(setLive), [mock]);
@@ -91,6 +91,9 @@ function MockMenu() {
 }
 
 const KIND_ICON = { tag: TagIcon, branch: GitBranchIcon, commit: GitCommitHorizontalIcon } as const;
+
+/** Only in builds that contain the mock backend (the production page has neither the menu nor the backend). */
+const MockMenu = __QSTATE_MOCK__ ? MockMenuImpl : () => null;
 
 export function TopBar() {
   const ws = useAtomValue(workspaceAtom);

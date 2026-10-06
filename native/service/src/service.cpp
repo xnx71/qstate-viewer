@@ -1,5 +1,6 @@
 #include "qstate/service/service.h"
 
+#include "memory.h"
 #include "module.h"
 #include "qstate/support/dir_scan.h"
 #include "workspace_manager.h"
@@ -60,6 +61,11 @@ Service::Service(ServiceConfig config) : config_(std::make_shared<const ServiceC
     state_->core = std::make_shared<CoreLoader>(
         config_->cacheDir.empty() ? support::defaultCacheDir() : config_->cacheDir, config_->git);
     state_->workspaces = std::make_shared<WorkspaceManager>(config_, state_->core);
+}
+
+void Service::trimMemory(bool dropCaches) {
+    if (dropCaches) state_->workspaces->trimCaches();
+    releaseFreeHeapMemory();
 }
 
 nlohmann::json Service::appInfo() const {

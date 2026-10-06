@@ -891,6 +891,11 @@ TablePage TableEngine::page(const TableRequest& req) {
                 stride += keyWords(cols[s.col]);
             }
             std::vector<std::uint64_t> keys;
+            if (filters.empty()) {
+                // every row qualifies: exact capacity instead of geometric growth (8M rows: ~100 MB of slack and a copy at the end)
+                res->ids.reserve(static_cast<std::size_t>(all.n));
+                keys.reserve(static_cast<std::size_t>(all.n) * stride);
+            }
             gatherRows(
                 *I.src, all.n, [&](std::uint64_t i) { return rowAbsOffset(all.at(i)); },
                 static_cast<std::size_t>(rowSize),
@@ -923,9 +928,11 @@ TablePage TableEngine::page(const TableRequest& req) {
                     return a < b; // stable: original row order
                 };
                 std::sort(order.begin(), order.end(), cmp);
+                std::vector<std::uint64_t>().swap(keys); // the keys are not needed any more: give them back before the next allocation
                 std::vector<std::uint32_t> sorted(order.size());
                 for (std::size_t i = 0; i < order.size(); ++i) sorted[i] = res->ids[order[i]];
                 res->ids.swap(sorted);
+                std::vector<std::uint32_t>().swap(order);
             }
             res->ids.shrink_to_fit();
             I.cache->put(k, res, sizeof(TableResult) + res->ids.capacity() * 4);

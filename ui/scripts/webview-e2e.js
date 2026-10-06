@@ -195,6 +195,22 @@
       log("body font " + cs.fontFamily.slice(0, 60) + " size " + cs.fontSize + " features " + getComputedStyle(document.documentElement).fontFeatureSettings);
     });
 
+    await step("bridge: the webview/webview promise table is repaired (answered calls are forgotten) and the debug hook reports it", async function () {
+      var dbg = window.__qstate_debug;
+      check(dbg && typeof dbg.stats === "function", "window.__qstate_debug is installed");
+      var before = dbg.stats().bridge;
+      check(before.fixApplied === true, "fixWebviewPromiseLeak found the shim of this webview version and replaced call / onReply: " + JSON.stringify(before));
+      var many = [];
+      for (var i = 0; i < 50; i++) many.push(rpc("app.info"));
+      await Promise.all(many);
+      // the app's own start-up calls (sync, directory listing) may still be in flight: ours must not add to them
+      await until(function () {
+        return dbg.stats().bridge.pending <= before.pending;
+      }, "the 50 answered calls to be forgotten (pending " + JSON.stringify(dbg.stats().bridge) + " vs " + before.pending + " before)", 5000);
+      var after = dbg.stats().bridge;
+      check(after.receivedMB > before.receivedMB, "the data volume counter moves: " + before.receivedMB + " -> " + after.receivedMB);
+    });
+
     var cfg = window.__QSTATE_E2E || {};
     var byText = function (sel, text, root) {
       return $$(sel, root).find(function (e) {

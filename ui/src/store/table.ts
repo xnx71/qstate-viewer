@@ -2,6 +2,7 @@
 import { atom } from "jotai";
 import { atomFamily } from "jotai-family";
 import type { FilterSpec, NodeId, SortSpec } from "@/rpc/contract";
+import { dropTableCaches } from "./data";
 import { store } from "./store";
 
 export interface TableTarget {
@@ -46,14 +47,21 @@ export function openTable(contract: number, id: NodeId, label: string, typeName:
   if (!tabs.some((t) => t.key === key)) {
     const next = [...tabs, { key, contract, id, label, typeName }];
     // keep the strip bounded: drop the oldest of the other tabs
-    store.set(openTablesAtom, next.length > 10 ? next.slice(next.length - 10) : next);
+    const dropped = next.length > 10 ? next.slice(0, next.length - 10) : [];
+    store.set(openTablesAtom, next.slice(dropped.length));
+    for (const t of dropped) {
+      tableUiAtomFamily.remove(t.key);
+      dropTableCaches(t.contract, t.id);
+    }
   }
   store.set(centerTabAtom, key);
 }
 
 export function closeTable(key: string): void {
   const tabs = store.get(openTablesAtom);
+  const closing = tabs.find((t) => t.key === key);
   store.set(openTablesAtom, tabs.filter((t) => t.key !== key));
+  if (closing) dropTableCaches(closing.contract, closing.id);
   tableUiAtomFamily.remove(key);
   if (store.get(centerTabAtom) === key) store.set(centerTabAtom, "tree");
 }

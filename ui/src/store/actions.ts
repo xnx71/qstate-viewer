@@ -7,7 +7,7 @@ import { coreLabel } from "@/features/workspace/refs";
 import { clearAllQueries } from "./data";
 import { hydrateFromSettings, updatePrefs } from "./prefs";
 import { store } from "./store";
-import { closeTablesOfContract, openTablesAtom } from "./table";
+import { closeTablesOfContract, openTablesAtom, tableUiAtomFamily } from "./table";
 import { initTree, refreshTree, resetTreeState, treeAtomFamily } from "./tree";
 import {
   appInfoAtom,
@@ -48,6 +48,7 @@ function applyWorkspace(ws: Workspace, keepSelection: boolean): void {
   store.set(selectedContractAtom, sel);
   if (sel !== null && isReadable(ws.contracts.find((c) => c.index === sel))) void initTree(sel);
   if (!keep) {
+    for (const t of store.get(openTablesAtom)) tableUiAtomFamily.remove(t.key);
     store.set(openTablesAtom, []);
   } else {
     // tables of vanished contracts

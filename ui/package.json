@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --mode mock --outDir dist-mock && node scripts/check-bundle.mjs",
     "typecheck": "tsc -b",
     "lint": "oxlint src scripts",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
-    "scroll-test": "node scripts/scroll-test.mjs"
+    "scroll-test": "node scripts/scroll-test.mjs",
+    "test:memory": "node scripts/memory.mjs --quick --budget=scripts/memory-budgets.json"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

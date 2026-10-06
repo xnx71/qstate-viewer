@@ -146,6 +146,24 @@ Result on WebKitGTK 2.52 / Xvfb with the real epoch-229 data: all steps pass, th
 learned: `navigator.clipboard` and `crypto.randomUUID` do not exist in the `set_html` page (the UI falls back to
 `execCommand("copy")`), oklch / color-mix / container queries / `:has()` / `field-sizing` are supported.
 
+### Memory behaviour of the host
+
+(Measurements and how to repeat them: docs/MEMORY.md.) `gui::tuneAllocator()` runs first thing in `main`: on glibc it fixes the
+mmap threshold at 256 KiB (big vectors such as sorted table orders go back to the OS when freed instead of staying in the
+heap) and limits malloc to 2 arenas. A host thread (`IdleTrigger`, `gui/memory.h`) calls `Service::trimMemory()`: after 60 s
+without a bridge request the free heap goes back to the OS, after 10 minutes the decode cache is dropped as well; any request
+re-arms both. The window's own memory is the system webview's business, with one exception on Windows: every answer of the
+bridge reaches the page as a script (`webview::resolve` evaluates `onReply(id, status, "<json>")`) and V8's in-memory
+compilation cache keeps the source of every script it compiles, so a WebView2 renderer collected hundreds of MB of dead answers
+between major GCs (headless Chrome 154: 665 MB after 900 answers of 300 KB, 84 MB with `--js-flags=--no-compilation-cache`). On
+Windows `main` therefore sets `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--js-flags=--no-compilation-cache` unless the variable is
+already set (nothing evaluates the same script twice, so the cache buys nothing). Unverified on Windows (docs/MEMORY.md).
+
+The JavaScript half of webview/webview 0.12.0 keeps every answered call in `_promises` forever, which retains every response
+for the life of the window. The UI repairs it at start-up (`ui/src/rpc/transports/webview.ts`, `fixWebviewPromiseLeak`: it
+replaces `call` / `onReply` on the prototype of `window.__webview__`; wire format unchanged). When the vendored library is
+updated, check whether it still needs the fix (`webview.test.ts` replays the library's code).
+
 ### Large payloads: measurements and guidance
 
 Measured through the real bridge (WebKitGTK 2.52 on Xvfb, software rendering, RelWithDebInfo, string result made of

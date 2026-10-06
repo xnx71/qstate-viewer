@@ -27,8 +27,9 @@ struct ServiceConfig {
     std::string appName = "qstate-viewer";
     // "" = the version of the CMake project.
     std::string version;
-    // Size of the decode cache shared by all contracts of the open workspace.
-    std::size_t decodeCacheBytes = std::size_t(256) << 20;
+    // Size of the decode cache shared by all contracts of the open workspace (sorted / filtered table orders, container
+    // scans). 128 MB holds four sorts of an 8M-row table; measured in docs/MEMORY.md.
+    std::size_t decodeCacheBytes = std::size_t(128) << 20;
     // Settings file ("" = <config dir>/qstate-viewer/settings.json).
     std::string settingsPath;
     // Application cache directory ("" = support::defaultCacheDir()): git mirrors in <cacheDir>/repos, exported core
@@ -60,6 +61,11 @@ public:
     // stub for the rest. `events` is where services publish "workspace.updated" / "contracts.changed".
     // The dispatcher and the bus must outlive the registered handlers.
     void registerAll(rpc::Dispatcher& dispatcher, rpc::EventBus& events);
+
+    // Returns free heap memory to the operating system and, with `dropCaches`, also drops the decode cache (derived data
+    // only: the next table sort / container scan recomputes it). Safe from any thread at any time; the host calls it after
+    // periods without requests (docs/MEMORY.md).
+    void trimMemory(bool dropCaches = true);
 
     // The value of the `app.info` result.
     nlohmann::json appInfo() const;

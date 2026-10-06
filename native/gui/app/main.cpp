@@ -22,6 +22,7 @@
 #include "qstate/gui/assets.h"
 #include "qstate/gui/bridge.h"
 #include "qstate/gui/event_pump.h"
+#include "qstate/gui/memory.h"
 #include "qstate/gui/selftest.h"
 #include "qstate/rpc/dispatcher.h"
 #include "qstate/rpc/framing.h"
@@ -113,10 +114,25 @@ constexpr int kWidth = 1360;
 constexpr int kHeight = 860;
 constexpr unsigned kWorkers = 4;
 constexpr int kSelftestTimeoutSec = 60;
+// Without a request for this long the free heap memory goes back to the OS (cheap); after the longer period the decode
+// cache (derived data) is dropped as well. Any request re-arms both (docs/MEMORY.md).
+constexpr std::chrono::seconds kIdleHeapTrim{60};
+constexpr std::chrono::seconds kIdleCacheDrop{600};
 
 } // namespace
 
 int main(int argc, char** argv) {
+    gui::tuneAllocator(); // before any thread exists
+#if defined(_WIN32)
+    // WebView2 (Chromium / V8): V8's in-memory compilation cache keeps the SOURCE of every script that is compiled, and every
+    // answer of the bridge is delivered as a script (webview::resolve evaluates `onReply(id, status, "<json>")`), so the
+    // renderer collected hundreds of MB of dead answers between major GCs (measured in headless Chrome 154: 665 MB after 900
+    // answers of 300 KB, 84 MB with this flag; docs/MEMORY.md). Nothing here evaluates the same script twice, so the cache
+    // has no benefit. A value already set by the user / the environment is left alone. Not verified on Windows.
+    if (envString("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").empty()) {
+        _putenv_s("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--js-flags=--no-compilation-cache");
+    }
+#endif
 #if !defined(_WIN32)
     const sigset_t termSignals = blockTerminationSignals();
 #endif
@@ -156,11 +172,20 @@ int main(int argc, char** argv) {
     w.set_title(kTitle);
     w.set_size(kWidth, kHeight, WEBVIEW_HINT_NONE);
 
+    // Activity of the bridge (a request arrived or was answered) re-arms the idle memory trims below.
+    gui::IdleTrigger idleHeap{kIdleHeapTrim};
+    gui::IdleTrigger idleCaches{kIdleCacheDrop};
+    auto activity = [&idleHeap, &idleCaches] {
+        idleHeap.activity();
+        idleCaches.activity();
+    };
+
     // window.__qstate_invoke(method, params) -> Promise. The request is parsed on the UI thread (small); the
     // handler runs on a pool thread, which resolves the promise (w.resolve is thread-safe).
     w.bind(
         gui::kInvokeBinding,
-        [&w, &dispatcher](const std::string& id, const std::string& req, void*) {
+        [&w, &dispatcher, activity](const std::string& id, const std::string& req, void*) {
+            activity();
             gui::InvokeCall call;
             std::string error;
             if (!gui::parseInvokeArgs(req, call, error)) {
@@ -170,9 +195,10 @@ int main(int argc, char** argv) {
             }
             dispatcher.dispatchAsync(
                 call.method, std::move(call.params),
-                [&w, id](nlohmann::json response) {
+                [&w, id, activity](nlohmann::json response) {
                     gui::BridgeReply reply = gui::makeReply(response);
                     w.resolve(id, reply.status, reply.json);
+                    activity();
                 });
         },
         nullptr);
@@ -243,6 +269,15 @@ int main(int argc, char** argv) {
     });
 #endif
 
+    // Idle memory trim (docs/MEMORY.md): only the host's own heap; the webview process is the system's business.
+    std::thread trimThread([&] {
+        while (!stopHelpers.waitFor(std::chrono::seconds(5))) {
+            const bool heap = idleHeap.due();
+            const bool caches = idleCaches.due();
+            if (heap || caches) service.trimMemory(/*dropCaches=*/caches);
+        }
+    });
+
     std::atomic<bool> selftestTimedOut{false};
     std::thread selftestThread;
     if (selftest) {
@@ -272,6 +307,9 @@ int main(int argc, char** argv) {
     stopHelpers.request();
     if (signalThread.joinable()) {
         signalThread.join();
+    }
+    if (trimThread.joinable()) {
+        trimThread.join();
     }
     if (selftestThread.joinable()) {
         selftestThread.join();

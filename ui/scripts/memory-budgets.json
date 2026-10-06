@@ -1,0 +1,13 @@
+{
+  "A": { "heapMB": 9, "nodes": 600, "listeners": 800, "privateMB": 90 },
+  "B": { "heapMB": 11, "nodes": 6000, "listeners": 1400, "privateMB": 100 },
+  "C": { "heapMB": 11, "nodes": 1500, "listeners": 700, "privateMB": 100 },
+  "D": { "heapMB": 12, "nodes": 2200, "listeners": 750, "privateMB": 110 },
+  "E": { "heapMB": 16, "nodes": 2400, "listeners": 800, "privateMB": 130, "cacheMB": 8 },
+  "F": { "heapMB": 26, "nodes": 4000, "listeners": 1100, "privateMB": 170, "cacheMB": 14 },
+  "G": { "heapMB": 26, "nodes": 1600, "listeners": 800, "privateMB": 170, "cacheMB": 14 },
+  "H": { "heapMB": 26, "nodes": 3000, "listeners": 900, "privateMB": 170, "cacheMB": 14 },
+  "I": { "heapMB": 26, "nodes": 3000, "listeners": 900, "privateMB": 170, "cacheMB": 14 },
+  "J": { "heapMB": 26, "nodes": 3000, "listeners": 900, "privateMB": 170, "cacheMB": 14 },
+  "K": { "heapMB": 21, "nodes": 1700, "listeners": 700, "privateMB": 150, "cacheMB": 7 }
+}

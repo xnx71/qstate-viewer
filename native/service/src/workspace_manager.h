@@ -45,6 +45,9 @@ public:
     std::shared_ptr<Workspace> reload(const std::atomic<bool>* callerCancel);
     void close();
 
+    // Drops the derived data in the decode cache (everything in it can be recomputed).
+    void trimCaches() { cache_->clear(); }
+
 private:
     struct Attempt {
         std::uint64_t ticket = 0;

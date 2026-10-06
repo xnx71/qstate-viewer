@@ -1,4 +1,6 @@
+import { useAtomValue } from "jotai";
 import { useEffect, useRef } from "react";
+import { cacheEpochAtom } from "@/store/cacheEpoch";
 import { isJump, rowsToLoad, type ScrollDir } from "./pageWindow";
 import { PageScheduler, type PageJob } from "./pageScheduler";
 
@@ -34,6 +36,7 @@ export const SETTLE_MS = 90;
 export function usePageLoader({ start, end, count, direction, pageRows, pageOfRow, epoch, enabled = true }: Options): void {
   const scheduler = useRef<PageScheduler | null>(null);
   if (!scheduler.current) scheduler.current = new PageScheduler(3);
+  const cacheEpoch = useAtomValue(cacheEpochAtom);
   const lastCenter = useRef<number | null>(null);
   const latest = useRef({ pageOfRow });
   latest.current = { pageOfRow };
@@ -68,7 +71,7 @@ export function usePageLoader({ start, end, count, direction, pageRows, pageOfRo
     }
     request();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `epoch` is the explicit change signal
-  }, [start, end, count, direction, pageRows, epoch, enabled]);
+  }, [start, end, count, direction, pageRows, epoch, enabled, cacheEpoch]);
 
   useEffect(() => () => scheduler.current?.cancelQueued(), []);
 }

@@ -7,9 +7,11 @@ React 19 + shadcn/ui (Base UI) + Tailwind 4 + motion + TanStack Table + Jotai, b
 pnpm install
 pnpm dev          # browser with the in-memory mock backend (src/rpc/mock)
 pnpm typecheck && pnpm lint && pnpm test
-pnpm build        # dist/index.html, embedded into the native executable
+pnpm build        # dist/index.html (production: no mock, embedded into the native executable) + dist-mock/index.html (with the
+                  # mock, for the headless tests) + size / content guard of both (scripts/check-bundle.mjs)
 pnpm smoke        # headless Chrome end-to-end against the mock (needs `pnpm build`)
 pnpm scroll-test  # headless Chrome: scrolling / refetch / sorting never replace loaded rows by placeholders
+pnpm test:memory  # headless Chrome: the memory scenario against the mock, asserting heap / DOM / cache budgets (docs/MEMORY.md)
 node scripts/shots.mjs <dir> [--size=1100x700] [--theme=light] [--ui=large]   # screenshot tour
 ```
 
@@ -49,6 +51,15 @@ The real-webview run is `scripts/webview-e2e.sh` (see the top-level README); `sc
   longer needs (`pageScheduler.ts`). A scrollbar drag (a jump) requests once where it settles.
 - Live updates: the new generation is fetched while the old rows stay (and flash when the value changes); the table keeps
   the previous result set, dimmed (`.is-stale`), until the first block of a new sort / filter arrives.
+
+## Memory
+
+The renderer is the expensive part of a webview app, so everything the UI keeps is bounded: every query cache has an entry cap
+AND a byte budget (`src/store/data.ts`, LRU, estimated with `src/lib/sizeOf.ts`), only the newest generation of a page stays,
+closing a table tab drops its pages, a hidden window trims the caches (`src/store/memory.ts`), long lists are virtualized (tree,
+tables, hex, Find results). `src/rpc/transports/webview.ts` also works around a leak of webview/webview 0.12.0 that kept every
+RPC answer alive. Measurements, budgets and the harness: [docs/MEMORY.md](../docs/MEMORY.md). `window.__qstate_debug.stats()` in
+the page shows the cache sizes.
 
 ## Context menus
 

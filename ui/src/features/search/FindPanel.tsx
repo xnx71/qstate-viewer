@@ -5,6 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fmtCount, fmtDuration, fmtHexOffset } from "@/lib/format";
 import { guessSearchMode } from "@/lib/searchMode";
+import { rowPx } from "@/lib/sizes";
+import { useRowSlots } from "@/lib/useRowSlots";
+import { useScaledVirtualizer } from "@/lib/useScaledVirtualizer";
+import { uiSizeAtom } from "@/store/prefs";
 import { cn } from "@/lib/utils";
 import { nodeMenu } from "@/features/contextmenu/builders/node";
 import { useContextMenu } from "@/features/contextmenu/useContextMenu";
@@ -25,9 +29,14 @@ export function FindPanel() {
   const listRef = useRef<HTMLDivElement>(null);
   const guess = st.mode === "auto" ? guessSearchMode(st.query) : null;
   const res = st.result;
+  // Up to 500 results: only the rows in view exist in the DOM (500 rows were ~6,000 elements for every search).
+  const ROW_H = rowPx("list", useAtomValue(uiSizeAtom));
+  const sv = useScaledVirtualizer({ count: res?.matches.length ?? 0, rowHeight: ROW_H, scrollRef: listRef, overscan: 6 });
+  const slotOf = useRowSlots(sv.rows.length);
 
   useEffect(() => {
-    listRef.current?.querySelector<HTMLElement>(`[data-match="${st.active}"]`)?.scrollIntoView({ block: "nearest" });
+    if (st.active >= 0) sv.scrollToRow(st.active, "auto");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scroll only when the active result changes
   }, [st.active]);
 
   // Context menu of a result: the node it lies in, plus the matched range.
@@ -120,34 +129,44 @@ export function FindPanel() {
       </div>
       <div ref={listRef} tabIndex={0} onKeyDown={onListKey} {...ctx} role="listbox" aria-label="Search results" className="min-h-0 flex-1 overflow-y-auto outline-none">
         {res && res.matches.length === 0 && <p className="p-4 text-center text-fg-muted">No matches.</p>}
-        {res?.matches.map((m, i) => (
-          <button
-            key={`${m.offset}:${i}`}
-            type="button"
-            role="option"
-            aria-selected={i === st.active}
-            data-match={i}
-            data-kbd-focus={i === st.active ? "" : undefined}
-            onClick={() => void gotoMatch(i)}
-            className={cn(
-              "flex w-full items-center gap-2 border-b border-border/40 px-3 py-1 text-left text-data hover:bg-accent/40",
-              i === st.active && "bg-accent",
-            )}
-          >
-            <span className="w-24 shrink-0 font-mono text-t-int tabular">{fmtHexOffset(m.offset)}</span>
-            <span className="flex min-w-0 flex-1 items-center gap-0.5 font-mono">
-              {m.location.path.slice(1).map((p, j, arr) => (
-                <span key={`${p.id}:${j}`} className="flex min-w-0 items-center gap-0.5">
-                  <span className={cn("truncate", j === arr.length - 1 ? "font-semibold" : "text-fg-muted")}>{p.label}</span>
-                  {j < arr.length - 1 && <ChevronRightIcon className="size-3.5 shrink-0 text-fg-subtle" />}
-                </span>
-              ))}
-              {m.location.path.length <= 1 && <span className="text-fg-muted">state</span>}
-            </span>
-            <span className="hidden max-w-48 shrink-0 truncate font-mono text-meta text-fg-muted @min-[500px]:inline">{m.location.typeName}</span>
-            <span className="shrink-0 font-mono text-meta text-fg-muted tabular">{m.length} B</span>
-          </button>
-        ))}
+        {res && res.matches.length > 0 && (
+          <div style={{ height: sv.scrollHeight, position: "relative" }}>
+            {sv.rows.map((r) => {
+              const m = res.matches[r.index];
+              if (!m) return null;
+              const i = r.index;
+              return (
+                <button
+                  key={slotOf(i)}
+                  type="button"
+                  role="option"
+                  aria-selected={i === st.active}
+                  data-match={i}
+                  data-kbd-focus={i === st.active ? "" : undefined}
+                  onClick={() => void gotoMatch(i)}
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, height: ROW_H, transform: `translateY(${r.y}px)` }}
+                  className={cn(
+                    "flex w-full items-center gap-2 border-b border-border/40 px-3 py-1 text-left text-data hover:bg-accent/40",
+                    i === st.active && "bg-accent",
+                  )}
+                >
+                  <span className="w-24 shrink-0 font-mono text-t-int tabular">{fmtHexOffset(m.offset)}</span>
+                  <span className="flex min-w-0 flex-1 items-center gap-0.5 font-mono">
+                    {m.location.path.slice(1).map((p, j, arr) => (
+                      <span key={`${p.id}:${j}`} className="flex min-w-0 items-center gap-0.5">
+                        <span className={cn("truncate", j === arr.length - 1 ? "font-semibold" : "text-fg-muted")}>{p.label}</span>
+                        {j < arr.length - 1 && <ChevronRightIcon className="size-3.5 shrink-0 text-fg-subtle" />}
+                      </span>
+                    ))}
+                    {m.location.path.length <= 1 && <span className="text-fg-muted">state</span>}
+                  </span>
+                  <span className="hidden max-w-48 shrink-0 truncate font-mono text-meta text-fg-muted @min-[500px]:inline">{m.location.typeName}</span>
+                  <span className="shrink-0 font-mono text-meta text-fg-muted tabular">{m.length} B</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </section>
   );
