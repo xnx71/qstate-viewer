@@ -13,9 +13,10 @@ only sees a `rpc::Dispatcher` + `rpc::EventBus`.
 | `fs_methods.cpp` | `fs.list` (`support::listDirectory`, "" = home; files named `contractNNNN.EEE` carry `state: {index, epoch}`, `hints.stateEpochs`) |
 | `core_methods.cpp` | `core.sync`, `core.commits`; `core.progress` events |
 | `workspace_methods.cpp` | `workspace.open / get / reload / close`; parameter validation; `recentWorkspaces` is updated after every successful open |
-| `state_methods.cpp` | `schema.types`, `state.node / children / bytes / locate / reveal / search / digest`, `table.describe / rows`; limits of contract.ts are enforced (`invalid_params` outside 1..1000 children / table rows, 1..5000 search, bytes <= 65536) |
+| `state_methods.cpp` | `schema.types`, `state.node / children / bytes / locate / reveal / search / digest`, `table.describe / rows`; limits of contract.ts are enforced (`invalid_params` outside 1..1000 children / table rows, 1..5000 search, bytes <= 65536); `contract` is a `StateTarget` (`state_target.h`: a contract index or `"spectrum"` / `"universe"`) |
+| `ledger_methods.cpp` | `ledger.summary`, `ledger.lookup` (the ledgers of the shown epoch, see "Ledger files") |
 | `core_loader.cpp` | `CoreLoader` (public: `qstate/service/core_loader.h`): mirrors, ref resolution, export, `schema::extractSchema`; behind `core.sync`, `core.commits` and `workspace.open` |
-| `workspace.cpp` | `Workspace`: immutable request / schema / scan + per-contract mutable state (file info, `FileReader`, lazily created `StateDecoder`, generation) |
+| `workspace.cpp` | `Workspace`: immutable request / schema / scan + per-target mutable state (contracts and the two ledgers: file info, `FileReader`, lazily created `StateDecoder`, generation) |
 | `workspace_manager.cpp` | current workspace, open / reload / close, watcher event worker thread |
 | `schema_json.cpp` | `schema::Type` -> contract.ts `TypeInfo` |
 
@@ -86,23 +87,92 @@ search results. `blocked` is set when the node is not listed (`hideEmpty`: hidde
 element without a live PoV). `state.reveal` takes `id` or `offset` (= locate + reveal in one call). Tests:
 `native/decode/tests/reveal_tests.cpp` (every node of a synthetic state in both views, 2^24 slot map, real QX / QBOND).
 
+## Ledger files: spectrum.EEE and universe.EEE
+
+The two ledger files of an epoch are first-class targets next to the contracts:
+
+* **Schema**: `schema::extractSchema` also lays out `EntityRecord` (64 bytes) and `AssetRecord` (48 bytes, the union
+  `varStruct { issuance, ownership, possession }`; the anonymous members get the display names
+  `AssetRecord::varStruct::ownership` etc.) and reads the capacities `SPECTRUM_CAPACITY` / `ASSETS_CAPACITY`. Those are
+  macros, which preprocessing expands away, so the translation unit is rooted at a virtual overlay file that includes
+  the real `contract_def.h` and then declares `constexpr unsigned long long qstate_spectrumCapacity = SPECTRUM_CAPACITY;`
+  (same for assets) inside `#ifdef`s; the constant evaluator reads them (fallback: `spectrumSizeInBytes` /
+  `universeSizeInBytes` of `common_buffers.h` when present, divided by the record size). The result is
+  `Schema::ledgers` (`LedgerSchema {kind, recordType, rootType, recordSize, capacity, expectedSize, headerFile, error}`)
+  plus one synthetic array type `recordType[capacity]` per ledger (role `SpectrumTable` / `UniverseTable`) that is the
+  root of the ledger's state tree; the record types carry the roles `EntityRecord` / `AssetRecord`. A core version
+  without the types or macros leaves `error` set (and a warning diagnostic) and never fails the extraction. Verified:
+  v1.303.2 and HEAD give 2^24 slots, 1,073,741,824 / 805,306,368 bytes = the real file sizes.
+* **Decoding** (`decode`, `ledger.cpp`): the root `""` is the table (NodeKind `array`, `tabular`, `childCount` = live
+  records, `rawChildCount` = capacity); logical children are the live records in slot order (spectrum: non-zero
+  publicKey, universe: `type != 0`), raw children all slots, ids `i:<slot>`. The live slots come from one bulk pass
+  over the file in 1 MiB blocks (all-zero blocks are skipped) that also computes the aggregates of `ledger.summary`
+  and, for the universe, the issuance directory and the ownership -> issuance map (`LedgerScan`, cached per generation
+  in the shared `DecodeCache`: ~3 MB for the real spectrum, ~1.5 MB for the universe). Measured on the epoch-229 files
+  (page cache): spectrum scan 140-165 ms, universe scan 95 ms, summary afterwards < 0.1 ms. Universe records show the
+  members of the alternative selected by `type` as logical children (`i:<slot>/a:<member>`, the `type` byte as an
+  enum-like value) and the union as laid out in the raw view (`i:<slot>/f:varStruct/...`); previews: `<id>, balance N`
+  and `issuance NOST, 0 decimals, issuer ...` / `ownership of NOST: N shares, <id>, contract 1 (QX)` (the asset name is
+  resolved through `issuanceIndex`, for possessions through `ownershipIndex -> ownership -> issuanceIndex`).
+  `reveal` positions a live record by its rank among the live records (an empty slot only exists in the raw view),
+  `locate` follows the logical path, and a `state.search` for an identity on a ledger is answered by the hash lookup
+  (`pattern.note` says "hash lookup, N probes"); other patterns scan the bytes as usual.
+* **Tables**: spectrum view `entities` with the columns `$slot`, `publicKey`, `balance` (derived, incoming - outgoing,
+  128-bit safe, sortable / filterable), `incomingAmount`, `outgoingAmount`, the four counters / ticks; universe views
+  `all`, `issuances`, `ownerships`, `possessions` with `$slot`, `$type` (enum, `all` only), `publicKey`, `asset`
+  (derived: the issuance name, an `int` cell with `text`), `name`, `numberOfDecimalPlaces`, `unitOfMeasurement`,
+  `managingContractIndex` (`text` = contract name), `issuanceIndex` (derived, see below), `ownershipIndex` (slot),
+  `numberOfShares`; per view: `issuances` = `$slot, publicKey, asset, name, numberOfDecimalPlaces, unitOfMeasurement`,
+  `ownerships` = `$slot, publicKey, asset, managingContractIndex, issuanceIndex, numberOfShares`, `possessions` =
+  `$slot, publicKey, asset, managingContractIndex, issuanceIndex, ownershipIndex, numberOfShares`, `all` = `$slot, $type,
+  publicKey, asset, name, numberOfDecimalPlaces, unitOfMeasurement, managingContractIndex, issuanceIndex,
+  numberOfShares, ownershipIndex`. **`issuanceIndex` is derived in every view**: the slot of the issuance the record
+  belongs to (the same issuance the `asset` column names): an ownership's `issuanceIndex` member, a possession's
+  resolved through `ownershipIndex -> ownership record -> issuanceIndex` (the cached ownership -> issuance map), an
+  issuance's own `$slot`. It is an unsigned 32-bit `int` cell, sortable and filterable, `unavailable` ("ownership #N
+  not found") when a possession's ownership slot is empty or not an ownership (such rows never match a filter, not even
+  `ne`). So `issuanceIndex eq <slot>` filters the ownerships of an asset, the possessions of an asset (the filter the UI
+  carries from one view to the other) and, in `all`, the whole asset: the issuance row + its ownerships + its
+  possessions (epoch 229, NOST at slot 0: 1 + 109 + 109 = 219). In `all` a column of another alternative than the row
+  holds is `unavailable`. Sorting 670k spectrum rows by balance: ~240 ms (one coalesced pass, then cached like every
+  table order).
+* **`ledger.summary {kind}`**: `SpectrumSummary` (population, balances > 0, total supply, richest slot / identity /
+  balance; epoch 229: 670,379 entities, supply 176,923,511,873,269) or `UniverseSummary` (counts per record type and
+  one `AssetIssuanceSummary` per issuance with its ownership / possession counts and total shares; epoch 229: 147
+  issuances, 40,495 ownerships, 40,495 possessions). **`ledger.lookup {kind, identity}`**: identity (60 letters, checksum
+  verified) or 64 hex digits -> public key; probes from slot `u32[0] & (capacity - 1)` with linear probing until an
+  empty slot (spectrum: stops at the hit, keys are unique); returns every hit (`i:<slot>`, universe `type`, preview) and
+  the number of probes. Both are `not_found` without a file, `schema_error` without a layout, `invalid_params` for a
+  bad kind / identity.
+* **Workspace**: `Workspace.ledgers` always lists both kinds for a directory (status like contracts: `ok`,
+  `size-mismatch` with the same epoch hint, `missing-file`, `schema-error`), and only the opened one when `statePath` is a
+  `spectrum.EEE` / `universe.EEE` file (then `contracts` is empty); a single `contractNNNN.EEE` shows no ledgers. Every
+  `state.*` / `table.*` method takes `contract: StateTarget` (a number, or `"spectrum"` / `"universe"`; any other
+  string is `invalid_params`); `state.digest` stays contracts-only. The watcher covers the ledger files too: a
+  rewritten one gives `contracts.changed {contracts: [], ledgers: [LedgerInfo]}` with a new generation, a created or
+  removed one `workspace.updated`. `fs.list` marks them with `ledger: {kind, epoch}` and `hints.stateEpochs` also
+  counts epochs that only have ledger files. The decoders use the cache scopes `2^20 + kind`, their root label is the
+  file name.
+
 ## Workspace lifecycle
 
 `workspace.open` (request: `core {repoUrl, ref}`, `statePath`, `epoch?`, `defines?`):
 
 1. the request is normalized (`core` strings trimmed, `statePath`: `~`, relative paths, trailing separators). `statePath`
-   is a directory (scope `"dir"`) or a file named `contractNNNN.EEE` (scope `"file"`); anything else is
-   `invalid_params`, a missing path `io_error`. The state directory is scanned (`support::scanStateDir`); the shown epoch
-   is `request.epoch % 1000` or the highest epoch present (no files at all: no epoch). For a single file the epoch is the
-   extension of its name (a requested `epoch` is ignored) and the scan keeps only that file;
+   is a directory (scope `"dir"`) or a file named `contractNNNN.EEE`, `spectrum.EEE` or `universe.EEE` (scope `"file"`);
+   anything else is `invalid_params`, a missing path `io_error`. The state directory is scanned
+   (`support::scanStateDir`); the shown epoch is `request.epoch % 1000` or the highest epoch present (no files at all:
+   no epoch). For a single file the epoch is the extension of its name (a requested `epoch` is ignored) and the scan
+   keeps only that file;
 2. the core sources are resolved and the schema extracted (above; `defines` appended to `ExtractOptions::defines`;
    `NAME` means `NAME=1`); a `SchemaIndex` is built once per extraction;
 3. a `Workspace` is created: scope `dir`: one entry per contract of the schema plus one per state file without a schema
-   contract; scope `file`: the one entry of that contract. `ContractInfo.status` is derived from (schema contract,
-   file): `ok` (size == expected), `size-mismatch` (message: file size vs `sizeof(type)`, and when the core's `EPOCH`
-   differs from the files' epoch, a hint to pick a core version of that epoch / `ref "auto"`), `missing-file` ("not yet
-   constructed in epoch E" when the epoch is below the construction epoch), `schema-error` (layout could not be
-   computed), `unknown-contract` (file without a schema contract);
+   contract, and one per ledger kind; scope `file`: the one entry of that contract or ledger. `ContractInfo.status` is
+   derived from (schema contract, file): `ok` (size == expected), `size-mismatch` (message: file size vs
+   `sizeof(type)`, and when the core's `EPOCH` differs from the files' epoch, a hint to pick a core version of that
+   epoch / `ref "auto"`), `missing-file` ("not yet constructed in epoch E" when the epoch is below the construction
+   epoch), `schema-error` (layout could not be computed), `unknown-contract` (file without a schema contract);
+   `LedgerInfo.status` likewise (without `unknown-contract`);
 4. the workspace replaces the current one atomically (`Workspace.id` increases; generation counters continue from the
    previous workspace + 1, so cache keys never repeat), the old one is stopped (watcher joined) and destroyed when the
    last handler lets go of its `shared_ptr`. A successful open is recorded in `Settings.recentWorkspaces` (the request as
@@ -110,12 +180,12 @@ element without a live PoV). `state.reveal` takes `id` or `offset` (= locate + r
 
 `Workspace.state` = `{dir, scope, epoch?, epochsAvailable, otherFiles}`: `dir` is the directory of the files (the parent
 for a single file), `otherFiles` the spectrum / universe / fee / archive files of the shown epoch (always empty for a
-single file).
+single file; the ledger files stay listed there although they are also `Workspace.ledgers`).
 
 `state.*` / `table.*` accept every status that has a file and a layout (`ok`, `size-mismatch`: the file is decoded
-as far as it exists, nodes beyond the end have `inFile: false`). `state.bytes` / `state.digest` work for any
-contract with a file. No file / unknown contract (also: any contract other than the one of a single-file workspace)
--> `not_found`; layout missing -> `schema_error`.
+as far as it exists, nodes beyond the end have `inFile: false`). `state.bytes` works for any contract or ledger with a
+file, `state.digest` for any contract with a file. No file / unknown contract (also: any target other than the one of
+a single-file workspace) -> `not_found`; layout missing -> `schema_error`.
 
 `workspace.reload` = `open` with the current request, re-extracting the schema (from the cached export) and rescanning
 the files; no network access. `workspace.close` drops the workspace.
@@ -153,19 +223,20 @@ entries are dropped.
 * `core.progress {phase: "clone" | "fetch" | "export" | "parse", message, percent?}`: from `core.sync` and
   `workspace.open` (clone / fetch while a mirror is made or updated, `export` when the tree is exported, `parse` before
   the schema extraction). Emitted on every bus, not tied to the current workspace.
-* `ServiceConfig::watchFiles` (default true) starts a `support::DirWatcher` for every workspace: **only the state
-  files** are watched (`contractNNNN.EEE` of the directory, or the one file; polling with the settle times of research
-  report 06: 300 ms, 1000 ms for files >= 64 MiB, `ServiceConfig::watcher`). The exported core sources are immutable
-  and not watched; spectrum / universe / other files are not watched either.
-* A settled change of a `contractNNNN.EEE` of the shown epoch: the `FileReader` is refreshed, the generation is
-  bumped, `contracts.changed {workspaceId, contracts: [ContractInfo...]}` is emitted (status is recomputed: a file
-  still being written shows `size-mismatch`, and flips to `ok` with a second event when the write finished).
-  Changes arriving together are batched into one event.
-* A created / removed state file, or a file of another epoch (directory scope): the directory is rescanned (the schema
-  is reused when the epoch did not change) and `workspace.updated` carries the new `Workspace` (new `id`, generations
-  + 1). With no explicit `epoch` a newer epoch appearing in the directory becomes the shown one. A single-file
-  workspace whose file disappears stays open with that contract `missing-file`, and a `workspace.updated` follows when
-  the file comes back.
+* `ServiceConfig::watchFiles` (default true) starts a `support::DirWatcher` for every workspace: **only the state and
+  ledger files** are watched (`contractNNNN.EEE`, `spectrum.EEE`, `universe.EEE` of the directory, or the one file;
+  polling with the settle times of research report 06: 300 ms, 1000 ms for files >= 64 MiB, `ServiceConfig::watcher`).
+  The exported core sources are immutable and not watched; fee / archive / other files are not watched either.
+* A settled change of a `contractNNNN.EEE` / ledger file of the shown epoch: the `FileReader` is refreshed, the
+  generation is bumped, `contracts.changed {workspaceId, contracts: [ContractInfo...], ledgers?: [LedgerInfo...]}` is
+  emitted (`ledgers` only when a ledger changed; status is recomputed: a file still being written shows
+  `size-mismatch`, and flips to `ok` with a second event when the write finished). Changes arriving together are
+  batched into one event.
+* A created / removed state or ledger file, or a file of another epoch (directory scope): the directory is rescanned
+  (the schema is reused when the epoch did not change) and `workspace.updated` carries the new `Workspace` (new `id`,
+  generations + 1). With no explicit `epoch` a newer epoch appearing in the directory becomes the shown one. A
+  single-file workspace whose file disappears stays open with that contract / ledger `missing-file`, and a
+  `workspace.updated` follows when the file comes back.
 * After `workspace.close`, after a replacement by another open, and after the service is destroyed nothing is emitted
   for the old workspace (emission checks "is this still the current workspace" under the manager lock).
 * Events carry the workspace id; the UI should call `workspace.get` after connecting (events emitted earlier are lost).
@@ -174,13 +245,17 @@ entries are dropped.
 
 `native/service/tests`: a fake core as a **git repository** made with the real `git` in a temp directory
 (`fixtures.h`: tags `v5.0.0` / `v5.0.1` (epoch 5), `v9.0.0` = `main` (epoch 9), branch `dev` (epoch 7); a local path is
-the repository URL, so nothing needs the network) plus tiny state files: all methods, error codes, request shapes (tag,
-branch, sha, abbreviated sha, auto), single-file scope, recents (and old-shaped settings), `core.sync` /
-`core.commits` (clone, fetch, offline, bad URLs, no git, cancellation), progress events, live updates (watcher with
-20 ms polling), concurrency (TSan), cancellation. `real_tests.cpp` needs `QSTATE_TEST_CORE_REPO` (a git clone of the
-core with tags, used as the `repoUrl`) and `QSTATE_TEST_STATE_DIR` (epoch 229 files); `QSTATE_TEST_CORE_DIR_229` (plain
-snapshot of v1.303.2) is turned into a git repository for the tests that only need the matching sources, and
-`QSTATE_SOURCE_DIR` enables the digest comparison with `docs/research/data/digest_229.txt`. `network_tests.cpp`
+the repository URL, so nothing needs the network; it also defines `EntityRecord` / `AssetRecord` with 64-slot
+capacities and `writeFakeLedgers` writes matching `spectrum.EEE` / `universe.EEE`) plus tiny state files: all methods,
+error codes, request shapes (tag, branch, sha, abbreviated sha, auto), single-file scope, recents (and old-shaped
+settings), `core.sync` / `core.commits` (clone, fetch, offline, bad URLs, no git, cancellation), progress events, live
+updates (watcher with 20 ms polling), concurrency (TSan), cancellation; `ledger_tests.cpp`: `Workspace.ledgers` and
+their statuses, routing by `"spectrum"` / `"universe"`, `ledger.summary` / `ledger.lookup`, single ledger file scope,
+`fs.list` markers, ledger events, a core without the record types, and the real 229 directory. `real_tests.cpp` needs
+`QSTATE_TEST_CORE_REPO` (a git clone of the core with tags, used as the `repoUrl`) and `QSTATE_TEST_STATE_DIR` (epoch
+229 files); `QSTATE_TEST_CORE_DIR_229` (plain snapshot of v1.303.2) is turned into a git repository for the tests that
+only need the matching sources, and `QSTATE_SOURCE_DIR` enables the digest comparison with
+`docs/research/data/digest_229.txt`. `network_tests.cpp`
 (`QSTATE_TEST_NETWORK=1`): the real flow against https://github.com/qubic/core: sync, tag list (`v1.303.2` = epoch 229),
 commits, `auto` for the 229 files -> all 29 contracts ok. Everything skips when its variables are not set.
 `native/support/tests/git_tests.cpp` and `git_mirror_tests.cpp` cover the git layer itself (clone / fetch / prune,

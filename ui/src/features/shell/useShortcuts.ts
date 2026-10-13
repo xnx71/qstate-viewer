@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { store } from "@/store/store";
 import { toggleTheme } from "@/store/prefs";
 import { closeSearch, openSearch, searchAtom } from "@/store/search";
-import { helpDialogAtom, openDialogAtom, paletteModeAtom, paletteOpenAtom, selectedContractAtom } from "@/store/workspace";
+import { helpDialogAtom, openDialogAtom, paletteModeAtom, paletteOpenAtom, selectedTargetAtom } from "@/store/workspace";
 
 function isTyping(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -21,13 +21,13 @@ export function useShortcuts(): void {
         store.set(paletteOpenAtom, !store.get(paletteOpenAtom));
       } else if (mod && k === "f") {
         e.preventDefault();
-        if (store.get(selectedContractAtom) !== null) openSearch();
+        if (store.get(selectedTargetAtom) !== null) openSearch();
       } else if (mod && k === "o") {
         e.preventDefault();
         store.set(openDialogAtom, true);
       } else if (mod && k === "g") {
         e.preventDefault();
-        if (store.get(selectedContractAtom) !== null) {
+        if (store.get(selectedTargetAtom) !== null) {
           store.set(paletteModeAtom, "offset");
           store.set(paletteOpenAtom, true);
         }

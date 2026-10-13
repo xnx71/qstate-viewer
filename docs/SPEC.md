@@ -23,6 +23,14 @@ This document is the contract between the modules. `ui/src/rpc/contract.ts` is t
 File size == `sizeof(that type)` as compiled for x86-64 (little endian). So the viewer needs exactly what the
 compiler knows: the complete type definitions reachable from `contract_def.h`, with sizes, alignments and offsets.
 
+The two **ledger files** of an epoch are handled the same way: `spectrum.EEE` = `EntityRecord[SPECTRUM_CAPACITY]`
+(all entities and balances) and `universe.EEE` = `AssetRecord[ASSETS_CAPACITY]` (all assets: issuances, ownerships,
+possessions), both open-addressing hash tables keyed by `publicKey` (slot = `u32[0] & (capacity - 1)`, linear
+probing). The record types are in the same translation unit; the capacities are macros and are read through a virtual
+overlay root (docs/SERVICE.md "Ledger files"). The schema exposes them as `Schema::ledgers` plus a synthetic
+`recordType[capacity]` root type per ledger, the decoder adds the hash-table semantics (live-record scan, derived
+`balance` / `asset` columns, hash lookup), and the service addresses them as `contract: "spectrum" | "universe"`.
+
 ## 2. Pipeline
 
 ```
@@ -101,11 +109,11 @@ starts processes (`git`) or touches the file system for the application.
 | Module | Notes |
 | --- | --- |
 | `cpp` | lexer, preprocessor (token-identical to `g++ -E` on core HEAD and v1.303.2), tolerant declaration parser, constant evaluator, template instantiation, MSVC x86-64 layout engine. Whole HEAD unit: ~130 ms preprocess + ~50 ms parse + ~20 ms layout. |
-| `schema` | `extractSchema()`: contract table + layouts + QPI roles. All 29 epoch-229 file sizes equal the derived sizes; offsets equal the independent g++/clang oracle (`docs/research/data`). Extracts 172 of 207 core tags (all from v1.201 on). |
+| `schema` | `extractSchema()`: contract table + layouts + QPI roles + the ledger record types and capacities (`Schema::ledgers`). All 29 epoch-229 file sizes and both ledger file sizes equal the derived sizes; offsets equal the independent g++/clang oracle (`docs/research/data`). Extracts 172 of 207 core tags (all from v1.201 on). |
 | `support` | KangarooTwelve (matches all 29 node state digests, 1 GB in ~0.2 s with threads), identities, pread file reader, directory scan, polling watcher, git helper (`GitRepo`: refs, `git grep` of version facts, log, export) and git mirrors (`GitMirrorStore`: clone / fetch with progress and cancellation), settings store. |
-| `decode` | lazy node tree, logical / raw views, HashMap / HashSet / Collection / LinkedList decoding (cross-checked against Python reference decoders on real files), native sort / filter tables, byte search, locate. |
+| `decode` | lazy node tree, logical / raw views, HashMap / HashSet / Collection / LinkedList decoding (cross-checked against Python reference decoders on real files), native sort / filter tables, byte search, locate; ledger tables (spectrum: 670,379 live entities of 2^24 slots scanned in ~150 ms, supply 176,923,511,873,269 verified; universe: 147 / 40,495 / 40,495 records; hash lookup in microseconds). |
 | `rpc`, `gui` | dispatcher + worker pool + event bus, webview host (verified under xvfb with WebKitGTK 2.52), sysroot bootstrap without root. |
-| `service` | all methods of `contract.ts`; core sources from git (mirror, tag / branch / commit / auto, export cache), workspace lifecycle for a directory or a single state file, live events for state files. Opening the real 229 workspace: ~200 ms with a warm mirror. |
+| `service` | all methods of `contract.ts`; core sources from git (mirror, tag / branch / commit / auto, export cache), workspace lifecycle for a directory or a single state / ledger file, live events for state and ledger files, `ledger.summary` / `ledger.lookup`. Opening the real 229 workspace: ~200 ms with a warm mirror. |
 | `ui` | React app with mock / webview transports; single-file build (~1.1 MB, 350 KB gzip). |
 
 Verified platform: Linux x86-64. Windows / macOS code exists (`support/src/platform_win32.cpp`, webview CMake

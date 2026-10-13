@@ -1,4 +1,5 @@
 import { ArrowUpIcon, ClockIcon, CornerLeftUpIcon, EyeIcon, FileIcon, FileTextIcon, FolderIcon, FolderOpenIcon, HistoryIcon, HomeIcon, Loader2Icon } from "lucide-react";
+import { LEDGER_META } from "@/features/ledger/meta";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,7 +92,8 @@ export function StatePanel({ selection, onSelect, startDir, sep, homeDir, lastDi
     if (t.file && data?.path === t.dir) {
       // same folder: just pick the file
       const e = data.entries.find((x) => x.path === t.file);
-      if (e?.state) onSelect({ path: e.path, kind: "file", epochs: [e.state.epoch], epoch: e.state.epoch });
+      const epoch = e?.state?.epoch ?? e?.ledger?.epoch;
+      if (e && epoch !== undefined) onSelect({ path: e.path, kind: "file", epochs: [epoch], epoch });
     }
     go(t.dir);
   };
@@ -101,6 +103,7 @@ export function StatePanel({ selection, onSelect, startDir, sep, homeDir, lastDi
     if (r.kind === "up") go(r.path);
     else if (r.e.kind === "dir") go(r.e.path);
     else if (r.e.state) onSelect({ path: r.e.path, kind: "file", epochs: [r.e.state.epoch], epoch: r.e.state.epoch });
+    else if (r.e.ledger) onSelect({ path: r.e.path, kind: "file", epochs: [r.e.ledger.epoch], epoch: r.e.ledger.epoch });
   };
 
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -276,7 +279,9 @@ interface FsRowProps {
 function FsRow({ id, index, row, active, selected, onActivate, onFocusRow }: FsRowProps) {
   const base = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-data [content-visibility:auto] [contain-intrinsic-size:auto_34px]";
   const state = row.kind === "entry" ? row.e.state : undefined;
-  const dim = row.kind === "entry" && row.e.kind === "file" && !state;
+  const ledger = row.kind === "entry" ? row.e.ledger : undefined;
+  const LedgerIcon = ledger ? LEDGER_META[ledger.kind].Icon : null;
+  const dim = row.kind === "entry" && row.e.kind === "file" && !state && !ledger;
   return (
     <div
       id={id}
@@ -286,6 +291,7 @@ function FsRow({ id, index, row, active, selected, onActivate, onFocusRow }: FsR
       aria-disabled={dim || undefined}
       data-kind={row.kind === "up" ? "up" : row.e.kind}
       data-state={state ? "" : undefined}
+      data-ledger={ledger ? ledger.kind : undefined}
       onClick={() => {
         onFocusRow();
         onActivate();
@@ -304,11 +310,16 @@ function FsRow({ id, index, row, active, selected, onActivate, onFocusRow }: FsR
         </>
       ) : (
         <>
-          {state ? <FileTextIcon className="size-4 shrink-0 text-brand-text" /> : <FileIcon className="size-4 shrink-0 opacity-50" />}
-          <span className={cn("min-w-0 flex-1 truncate", state && "font-mono")}>{row.e.name}</span>
+          {state ? <FileTextIcon className="size-4 shrink-0 text-brand-text" /> : LedgerIcon ? <LedgerIcon className="size-4 shrink-0 text-t-asset" /> : <FileIcon className="size-4 shrink-0 opacity-50" />}
+          <span className={cn("min-w-0 flex-1 truncate", (state || ledger) && "font-mono")}>{row.e.name}</span>
           {state && (
             <span className="chip hidden shrink-0 rounded-md px-1.5 font-mono text-meta text-brand-text tabular @min-[480px]/fs:inline">
               #{state.index} · epoch {state.epoch}
+            </span>
+          )}
+          {ledger && (
+            <span className="chip hidden shrink-0 rounded-md px-1.5 font-mono text-meta text-t-asset tabular @min-[480px]/fs:inline">
+              {ledger.kind} · epoch {ledger.epoch}
             </span>
           )}
           {row.e.size !== undefined && <span className="hidden w-[4.5rem] shrink-0 text-right font-mono text-meta tabular @min-[300px]/fs:inline">{fmtBytes(row.e.size)}</span>}
@@ -334,7 +345,7 @@ function SelectionSummary({ selection, onSelect }: { selection: StateSelection |
         <div className="truncate font-mono" title={selection.path}>
           {shortenPath(selection.path, 56)}
         </div>
-        <div className="text-fg-muted">{file ? `Single state file · epoch ${selection.epoch}` : selection.epochs.length > 1 ? "Folder · choose the epoch" : `Folder${selection.epochs[0] !== undefined ? ` · epoch ${selection.epochs[0]}` : ""}`}</div>
+        <div className="text-fg-muted">{file ? `${/^(spectrum|universe)\./.test(baseName(selection.path)) ? "Single ledger file" : "Single state file"} · epoch ${selection.epoch}` : selection.epochs.length > 1 ? "Folder · choose the epoch" : `Folder${selection.epochs[0] !== undefined ? ` · epoch ${selection.epochs[0]}` : ""}`}</div>
       </div>
       {!file && selection.epochs.length > 1 && (
         <div role="group" aria-label="Epoch" className="flex shrink-0 gap-0.5 rounded-md bg-muted p-0.5">

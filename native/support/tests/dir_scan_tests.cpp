@@ -245,15 +245,19 @@ TEST_CASE("dir_scan: real state directory" * doctest::skip(qstate::testing::stat
     CHECK(set->contracts.size() == 29);
     CHECK(set->contiguous);
     CHECK(set->contracts[0].size == 8192);
-    bool fees = false, spectrum = false, universe = false, zip = false;
+    bool fees = false, spectrum = false, universe = false, zip = false, zipPresent = false;
+    for (const auto& entry : fs::directory_iterator(qstate::testing::stateDir())) {
+        const std::string n = entry.path().filename().string();
+        zipPresent |= n.size() > 4 && n.compare(n.size() - 4, 4, ".zip") == 0;
+    }
     for (const auto& o : scan.othersOfEpoch(229)) {
         fees |= o.kind == OtherFileKind::ContractExecFees && o.size == 156832;
-        spectrum |= o.kind == OtherFileKind::Spectrum;
-        universe |= o.kind == OtherFileKind::Universe;
+        spectrum |= o.kind == OtherFileKind::Spectrum && o.size == 1073741824ull && o.ext == 229u;
+        universe |= o.kind == OtherFileKind::Universe && o.size == 805306368ull && o.ext == 229u;
         zip |= o.kind == OtherFileKind::Archive;
     }
     CHECK(fees);
     CHECK(spectrum);
     CHECK(universe);
-    CHECK(zip);
+    CHECK(zip == zipPresent); // the sample directory may or may not keep its archive
 }

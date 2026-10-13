@@ -1,6 +1,8 @@
 // The portable 128-bit integers (used on MSVC) against the compiler's __int128, where there is one.
 #include <doctest/doctest.h>
 
+#include <limits>
+
 #include <cstdint>
 #include <random>
 
@@ -87,6 +89,27 @@ TEST_CASE("portable i128 and conversions") {
         const portable::u128 u(a);  // sign-extending conversion, like (unsigned __int128) of a negative __int128
         REQUIRE(same(u, static_cast<RefU>(ra)));
         REQUIRE(portable::i128(u) == a);
+        // addition / subtraction (ledger balances and sums): two's complement, compared with __int128
+        const portable::i128 s = a + b, d = a - b;
+        const RefI rs = ra + rb, rd = ra - rb;
+        REQUIRE(s.lo == static_cast<std::uint64_t>(rs));
+        REQUIRE(s.hi == static_cast<std::int64_t>(rs >> 64));
+        REQUIRE(d.lo == static_cast<std::uint64_t>(rd));
+        REQUIRE(d.hi == static_cast<std::int64_t>(rd >> 64));
+        portable::i128 acc = a;
+        acc += b;
+        acc -= portable::i128(x);
+        REQUIRE(acc == b);
+    }
+    {
+        // sums beyond 64 bits
+        portable::i128 big = std::numeric_limits<std::int64_t>::max();
+        big += portable::i128(std::numeric_limits<std::int64_t>::max());
+        big += portable::i128(2);
+        REQUIRE(big.hi == 1);
+        REQUIRE(big.lo == 0);
+        REQUIRE((big - portable::i128(1)).hi == 0);
+        REQUIRE(portable::i128(std::numeric_limits<std::int64_t>::min()) - portable::i128(1) < portable::i128(std::numeric_limits<std::int64_t>::min()));
     }
     CHECK(portable::i128(portable::u128(1u)) > portable::i128(0));
     CHECK(portable::i128(std::uint64_t{~0ull}) > portable::i128(0));       // unsigned values do not go negative

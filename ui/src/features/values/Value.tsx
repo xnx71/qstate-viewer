@@ -25,7 +25,7 @@ export function ContractChip({ index, name }: { index: number; name: string }) {
   return (
     <span className={cn(CHIP, "inline-flex items-center gap-1 text-brand-text font-semibold")} title={`Contract #${index}`}>
       {name || `#${index}`}
-      <span className="font-normal opacity-80">#{index}</span>
+      {name && <span className="font-normal opacity-80">#{index}</span>}
     </span>
   );
 }

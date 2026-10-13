@@ -11,8 +11,11 @@
 // The script runs the checkpoints below in order and ends with __memHost("done").
 //
 //   A dialog   B sync + commits + tags   C workspace opened   D QX tree expanded   E 2M-row raw array scrolled
-//   F tables (open, scroll, sort, filter)   G 10 contract switches   H find results   I hex view scrolled
-//   J idle with live updates   K everything closed
+//   F tables (open, scroll, sort, filter)   L ledgers (spectrum table scrolled deep + sorted, universe, lookup, 2^24-slot raw tree)
+//   G 10 contract switches   H find results   I hex view scrolled   J idle with live updates   K everything closed
+// Budgets (memory-budgets.json): L and the checkpoints after it carry the pages of the two ledger tables (5 open tables
+// instead of 3: +4-5 MB of table cache, within the table cache's own 24 MB budget) and, at G, DOM nodes that Blink
+// collects lazily after the ledger views were unmounted (the same pattern a contract switch shows; gone by H / K).
 (function () {
   "use strict";
   var cfg = window.__QSTATE_MEM || {};
@@ -349,6 +352,91 @@
     return "F tables"; // measured by main(): no local of this phase is alive then
   }
 
+  // ---- L: the ledgers: spectrum table (sorted, scrolled deep), universe + lookup, the 2^24-slot raw tree -------------
+  async function phaseL() {
+    var spectrum = $("[role=option][data-target='spectrum']");
+    if (!spectrum) {
+      log("no ledger entries in the sidebar: phase L skipped");
+      return "L ledgers";
+    }
+    spectrum.click();
+    await until(function () {
+      return $("[data-testid=ledger-view-spectrum] [role=grid] [role=row][aria-rowindex] [role=gridcell]") && /\d/.test(($("[data-testid=table-total]") || {}).innerText || "");
+    }, "spectrum table", 60000);
+    await until(function () {
+      return $("[data-testid=ledger-population]");
+    }, "spectrum summary", 60000);
+    await settle();
+    var grid = $("[role=grid]");
+    await dragThrough(grid, cfg.quick ? 10 : 30, dwell);
+    grid.scrollTop = 0;
+    await sleep(200);
+    // sort by balance ascending (it opens descending), then back
+    var header = function () {
+      return $("[role=columnheader][data-col=balance]");
+    };
+    if (header()) {
+      header().click();
+      await sleep(600);
+      await settle();
+      await dragThrough($("[role=grid]"), cfg.quick ? 4 : 12, dwell);
+      header().click();
+      await sleep(600);
+      await settle();
+    }
+    // lookup of the first row's identity
+    var cell = $("[role=grid] [role=row][aria-rowindex] [role=gridcell][data-col=publicKey] [title]");
+    var identity = cell ? (cell.getAttribute("title") || "").split("\n")[0] : "";
+    var box = $("input[aria-label='Look up identity in spectrum']");
+    if (box && /^[A-Z]{60}$/.test(identity)) {
+      setValue(box, identity);
+      key(box, "Enter");
+      await until(function () {
+        return $("[data-testid=lookup-hits] [data-hit]");
+      }, "lookup hits", 20000).catch(function () {
+        return null;
+      });
+    }
+    // universe: issuances + assets, one asset filtered
+    $("[role=option][data-target='universe']").click();
+    await until(function () {
+      return $("[data-testid=assets-table] [data-asset-row]") && $("[data-testid=ledger-view-universe] [role=grid] [role=row][aria-rowindex] [role=gridcell]");
+    }, "universe table", 60000);
+    await settle();
+    var asset = $("[data-asset-row]");
+    if (asset) {
+      asset.click();
+      await sleep(600);
+      await settle();
+      await dragThrough($("[role=grid]"), cfg.quick ? 4 : 10, dwell);
+    }
+    // the raw view of the spectrum hash table: 16,777,216 slots
+    $("[role=option][data-target='spectrum']").click();
+    await sleep(200);
+    var treeTab = $("[data-testid=tab-tree] button");
+    if (treeTab) treeTab.click();
+    await until(function () {
+      return $("[role=tree] [role=treeitem]");
+    }, "spectrum tree", 30000);
+    $("[role=tree] [role=treeitem]").click();
+    await until(function () {
+      return $("[aria-label='Show raw members']");
+    }, "raw members switch of the ledger root", 20000);
+    $("[aria-label='Show raw members']").click();
+    await until(function () {
+      return treeRows() > 16000000;
+    }, "16,777,217 rows", 60000);
+    await settle();
+    log("raw spectrum expanded: " + treeRows() + " rows");
+    var tree = $("[role=tree]");
+    await dragThrough(tree, cfg.quick ? 10 : 30, dwell);
+    tree.scrollTop = 0;
+    await settle();
+    if ($("[aria-label='Show raw members']")) $("[aria-label='Show raw members']").click();
+    await sleep(500);
+    return "L ledgers"; // measured by main(): no local of this phase is alive then
+  }
+
   // ---- G: 10 contract switches ---------------------------------------------------------------------------------------
   async function phaseG() {
     ids = $$("[role=option][data-contract]")
@@ -452,6 +540,18 @@
         await sleep(80);
       }
     }
+    // the ledger tables of phase L
+    var kinds = ["spectrum", "universe"];
+    for (var lk = 0; lk < kinds.length; lk++) {
+      var entry = $("[role=option][data-target='" + kinds[lk] + "']");
+      if (!entry) continue;
+      entry.click();
+      await sleep(250);
+      for (var lm = 0; lm < 6 && $("[aria-label='Close tab']"); lm++) {
+        $("[aria-label='Close tab']").click();
+        await sleep(80);
+      }
+    }
     var closeFind = $("[aria-label='Close find']") || byText("button", "Close");
     if (closeFind && $("#find-input")) closeFind.click();
     if ($("[aria-label='Collapse all']")) $("[aria-label='Collapse all']").click();
@@ -468,6 +568,7 @@
     await mark(await phaseD());
     await mark(await phaseE());
     await mark(await phaseF());
+    await mark(await phaseL());
     await mark(await phaseG());
     await mark(await phaseH());
     await mark(await phaseI());

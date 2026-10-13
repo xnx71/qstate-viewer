@@ -108,7 +108,7 @@ describe("table caches follow the table tabs", () => {
 describe("debugStats", () => {
   it("reports every named cache and the bridge state", () => {
     const s = debugStats();
-    expect(Object.keys(s.caches).sort()).toEqual(["bytes", "children", "node", "tableInfo", "tablePage", "type"]);
+    expect(Object.keys(s.caches).sort()).toEqual(["bytes", "children", "ledgerLookup", "ledgerSummary", "node", "tableInfo", "tablePage", "type"]);
     expect(s.caches["children"].maxBytes).toBeGreaterThan(0);
     expect(s.bridge.pending).toBe(0);
     expect(typeof s.summary).toBe("string");

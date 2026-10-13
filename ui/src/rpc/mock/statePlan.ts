@@ -39,9 +39,43 @@ export function stateFileName(epoch: number, index: number): string {
 
 export const STATE_FILE_RE = /^contract(\d{4})\.(\d+)$/;
 
+// ---- ledger files: spectrum.EEE (EntityRecord, 64 B) and universe.EEE (AssetRecord, 48 B), 2^24 slots each --------
+
+export const LEDGER_CAPACITY = 1 << 24;
+export const ENTITY_RECORD_SIZE = 64;
+export const ASSET_RECORD_SIZE = 48;
+export const LEDGER_FILE_RE = /^(spectrum|universe)\.(\d+)$/;
+
+export type LedgerKind = 'spectrum' | 'universe';
+
+export function ledgerRecordSize(kind: LedgerKind): number {
+  return kind === 'spectrum' ? ENTITY_RECORD_SIZE : ASSET_RECORD_SIZE;
+}
+
+/** Size of the whole ledger file as the node writes it (capacity x record size). */
+export function ledgerExpectedSize(kind: LedgerKind): number {
+  return LEDGER_CAPACITY * ledgerRecordSize(kind);
+}
+
+/**
+ * Size of the ledger file in the mock directory for an epoch, null when absent. Status variety: epoch 228 has no
+ * universe file (missing-file), the epoch-227 spectrum is 4 MiB short (size-mismatch); every other epoch is complete.
+ */
+export function ledgerFileSize(epoch: number, kind: LedgerKind): number | null {
+  if (epoch === 228 && kind === 'universe') return null;
+  if (epoch === 227 && kind === 'spectrum') return ledgerExpectedSize(kind) - 4 * 1024 * 1024;
+  return ledgerExpectedSize(kind);
+}
+
+export function ledgerFileName(epoch: number, kind: LedgerKind): string {
+  return `${kind}.${epoch}`;
+}
+
 export function otherFilesOf(epoch: number): { name: string; size: number }[] {
-  return [
-    { name: `spectrum.${epoch}`, size: 805_306_368 },
-    { name: `universe.${epoch}`, size: 1_073_741_824 },
-  ];
+  const out: { name: string; size: number }[] = [];
+  for (const kind of ['spectrum', 'universe'] as const) {
+    const size = ledgerFileSize(epoch, kind);
+    if (size !== null) out.push({ name: ledgerFileName(epoch, kind), size });
+  }
+  return out;
 }

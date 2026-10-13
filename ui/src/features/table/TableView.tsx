@@ -41,9 +41,12 @@ import { uiSizeAtom } from "@/store/prefs";
 import { cn } from "@/lib/utils";
 import { invoke } from "@/rpc/client";
 import type { CellValue, SortSpec, TableRow } from "@/rpc/contract";
+import { isLedger, rootLabel } from "@/lib/target";
+import type { CellRenderer } from "./cellRenderer";
 import { useTableInfo } from "@/store/data";
 import { centerTabAtom, filterRequestAtom, patchTableUi, tableUiAtomFamily, type TableTarget } from "@/store/table";
 import { tableCellMenu, tableHeaderMenu } from "@/features/contextmenu/builders/table";
+import { ledgerRowTarget } from "@/features/contextmenu/builders/ledger";
 import { useContextMenu } from "@/features/contextmenu/useContextMenu";
 import { revealNode, selectNode, treeAtomFamily } from "@/store/tree";
 import { store } from "@/store/store";
@@ -71,8 +74,8 @@ function resolve<T>(updater: T | ((old: T) => T), old: T): T {
 /** Select the row's node in the tree/inspector (breadcrumb from one cheap state.reveal call; the tree does not move). */
 async function selectRow(target: TableTarget, row: TableRow): Promise<void> {
   const label = `[${row.index}]`;
-  const root = { id: "", label: "state" };
-  selectNode(target.contract, { id: row.id, path: [root, { id: row.id, label: `${target.label}${label}` }] });
+  const root = { id: "", label: rootLabel(target.contract) };
+  selectNode(target.contract, { id: row.id, path: [root, { id: row.id, label: target.id === "" ? label : `${target.label}${label}` }] });
   try {
     const rv = await invoke("state.reveal", { contract: target.contract, id: row.id });
     const cur = store.get(treeAtomFamily(target.contract)).selected;
@@ -87,7 +90,17 @@ async function jumpToTree(target: TableTarget, row: TableRow): Promise<void> {
   await revealNode(target.contract, { id: row.id });
 }
 
-export function TableView({ target }: { target: TableTarget }) {
+interface TableViewProps {
+  target: TableTarget;
+  /** View-specific cell rendering (ledger tables); `undefined` from it falls back to the generic value. */
+  renderCell?: CellRenderer;
+  /** Extra toolbar content (right of the view switcher). */
+  toolbar?: React.ReactNode;
+  /** Takes over a view-switcher click (default: the new view with sort and filters reset). */
+  onViewChange?: (view: string) => void;
+}
+
+export function TableView({ target, renderCell, toolbar, onViewChange }: TableViewProps) {
   const ui = useAtomValue(tableUiAtomFamily(target.key));
   const uiSize = useAtomValue(uiSizeAtom);
   const ROW_H = rowPx("table", uiSize);
@@ -98,7 +111,7 @@ export function TableView({ target }: { target: TableTarget }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState({ start: 0, end: 30 });
   const [active, setActive] = useState<{ index: number; col: string } | null>(null);
-    const pinInit = useRef(false);
+  const pinInit = useRef(false);
 
   const query = useMemo(() => ({ view: ui.view, sort: ui.sort, filters: ui.filters, hideEmpty: ui.hideEmpty }), [ui.view, ui.sort, ui.filters, ui.hideEmpty]);
   const [direction, setDirection] = useState<ScrollDir>(0);
@@ -156,7 +169,8 @@ export function TableView({ target }: { target: TableTarget }) {
       patchTableUi(target.key, { pinning: resolve(u, store.get(tableUiAtomFamily(target.key)).pinning) as { start: string[]; end: string[] } }),
   });
 
-  const cols = info.data?.columns ?? [];
+  const cols = useMemo(() => info.data?.columns ?? [], [info.data?.columns]);
+  const colById = useMemo(() => new Map(cols.map((c) => [c.id, c])), [cols]);
   const isVisible = useCallback((id: string) => ui.visibility[id] !== false, [ui.visibility]);
   const rowByIndex = useMemo(() => new Map(windowRows.map((w) => [w.index, w.row])), [windowRows]);
 
@@ -236,6 +250,7 @@ export function TableView({ target }: { target: TableTarget }) {
       filters: ui.filters,
       sort: ui.sort,
       loaded: true,
+      ledger: isLedger(target.contract) && target.id === "" ? ledgerRowTarget(target.contract, row, cols) : undefined,
       setFilters: (filters) => patchTableUi(target.key, { filters }),
       setSort: (sort) => patchTableUi(target.key, { sort }),
       hideColumn: () => table.getColumn(colId)?.toggleVisibility(false),
@@ -253,7 +268,7 @@ export function TableView({ target }: { target: TableTarget }) {
         contract: target.contract,
         id: row.id,
         label: `[${row.index}]`,
-        path: target.label === "state" ? ["state", `[${row.index}]`] : ["state", target.label, `[${row.index}]`],
+        path: target.id === "" ? [rootLabel(target.contract), `[${row.index}]`] : [rootLabel(target.contract), target.label, `[${row.index}]`],
         select: () => selectRow(target, row),
       },
     });
@@ -284,16 +299,17 @@ export function TableView({ target }: { target: TableTarget }) {
           </span>
         </div>
         {tinfo.views.length > 1 && (
-          <Tabs value={ui.view ?? tinfo.view} onValueChange={(v) => patchTableUi(target.key, { view: String(v), sort: [], filters: [] })}>
-            <TabsList className="h-8! p-0.5">
+          <Tabs value={ui.view ?? tinfo.view} onValueChange={(v) => (onViewChange ? onViewChange(String(v)) : patchTableUi(target.key, { view: String(v), sort: [], filters: [] }))}>
+            <TabsList className="h-8! p-0.5" aria-label="Table view">
               {tinfo.views.map((v) => (
-                <TabsTrigger key={v.id} value={v.id} className="h-7 px-3 text-data">
+                <TabsTrigger key={v.id} value={v.id} className="h-7 px-3 text-data" data-view={v.id}>
                   {v.label}
                 </TabsTrigger>
               ))}
             </TabsList>
           </Tabs>
         )}
+        {toolbar}
         <div className="ml-auto flex items-center gap-1.5">
           {!tinfo.container && (
             <label className="flex items-center gap-2 text-data text-fg-muted" title="Skip all-zero elements">
@@ -524,7 +540,13 @@ export function TableView({ target }: { target: TableTarget }) {
                         }}
                         onClick={() => setActive({ index: wr.index, col: cell.column.id })}
                       >
-                        {v ? <Value value={v} identity={`${wr.row?.id}:${cell.column.id}`} /> : <span className="ph h-3 w-3/4" data-placeholder="" />}
+                        {v && wr.row ? (
+                          (renderCell && colById.get(cell.column.id) && renderCell({ column: colById.get(cell.column.id) as (typeof cols)[number], cell: v, row: wr.row, identity: `${wr.row.id}:${cell.column.id}` })) ?? (
+                            <Value value={v} identity={`${wr.row.id}:${cell.column.id}`} />
+                          )
+                        ) : (
+                          <span className="ph h-3 w-3/4" data-placeholder="" />
+                        )}
                       </div>
                     );
                   })}

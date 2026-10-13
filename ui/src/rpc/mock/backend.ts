@@ -6,6 +6,10 @@ import type {
   CoreVersion,
   ContractInfo,
   FsListing,
+  LedgerInfo,
+  LedgerKind,
+  LedgerLookup,
+  LedgerSummary,
   NodeInfo,
   NodeLocation,
   NodeReveal,
@@ -37,6 +41,7 @@ import { runSearch } from './search';
 import type { SearchMode } from './search';
 import { bytesToHex, clone, isPlainObject, isRpcError, rpcError } from './util';
 import { makeRng, mix, strHash } from './prng';
+import { MockLedger } from './ledgers';
 
 export interface MockOptions {
   seed?: number;
@@ -64,7 +69,8 @@ export interface MockBackend {
   setLive(on: boolean): void;
   isLive(): boolean;
   onLiveChange(cb: (on: boolean) => void): () => void;
-  triggerChange(contractIndex?: number): void;
+  /** Pretend a state file changed on disk: a contract index, a ledger kind, or (none) a random healthy contract. */
+  triggerChange(target?: number | LedgerKind): void;
   triggerWorkspaceUpdated(): void;
   getSim(): MockSim;
   setSim(patch: Partial<MockSim>): void;
@@ -88,6 +94,15 @@ function int(p: Record<string, unknown>, key: string, opts: { min?: number; max?
   if (opts.min !== undefined && v < opts.min) throw rpcError('invalid_params', `'${key}' must be >= ${opts.min}`);
   if (opts.max !== undefined && v > opts.max) throw rpcError('invalid_params', `'${key}' must be <= ${opts.max}`);
   return v;
+}
+
+const isLedgerKind = (v: unknown): v is LedgerKind => v === 'spectrum' || v === 'universe';
+
+/** The `contract` parameter of the state.* / table.* calls: a contract index or a ledger kind. */
+function target(p: Record<string, unknown>): number | LedgerKind {
+  const v = p.contract;
+  if (isLedgerKind(v)) return v;
+  return int(p, 'contract', { min: 0 });
 }
 
 function str(p: Record<string, unknown>, key: string, optional = false): string {
@@ -128,7 +143,9 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
   let timer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
   const generations = new Map<number, number>();
+  const ledgerGenerations = new Map<LedgerKind, number>();
   const sources = new Map<number, { key: string; src: StateSource }>();
+  const ledgerSources = new Map<LedgerKind, { key: string; src: MockLedger }>();
 
   const env = { contractName: (i: number): string | undefined => world.byIndex(i)?.name || undefined };
 
@@ -201,12 +218,16 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
 
   function open(req: WorkspaceRequest, reuseGenerations: boolean): Workspace {
     const gens = reuseGenerations ? new Map([...generations].map(([k, v]) => [k, v + 1] as const)) : new Map<number, number>();
-    const r = openWorkspace(world, fs, seed, repoFor(req.core.repoUrl), req, nextWorkspaceId, gens);
+    const lgens = reuseGenerations ? new Map([...ledgerGenerations].map(([k, v]) => [k, v + 1] as const)) : new Map<LedgerKind, number>();
+    const r = openWorkspace(world, fs, seed, repoFor(req.core.repoUrl), req, nextWorkspaceId, gens, lgens);
     nextWorkspaceId++;
     generations.clear();
     for (const c of r.workspace.contracts) generations.set(c.index, c.generation);
+    ledgerGenerations.clear();
+    for (const l of r.workspace.ledgers) ledgerGenerations.set(l.kind, l.generation);
     state = { ws: r.workspace, epoch: r.epoch };
     sources.clear();
+    ledgerSources.clear();
     tableCache.clear();
     keyCache.clear();
     return r.workspace;
@@ -251,6 +272,26 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
     return src;
   }
 
+  function ledgerInfo(kind: LedgerKind): LedgerInfo {
+    const ws = requireWs().ws;
+    const l = ws.ledgers.find((x) => x.kind === kind);
+    if (!l) throw rpcError('not_found', `The ${kind} is not part of the workspace`);
+    return l;
+  }
+
+  /** Per (ledger, generation) accessor. Throws not_found for a ledger without a file. */
+  function ledger(kind: LedgerKind): MockLedger {
+    const ws = requireWs();
+    const info = ledgerInfo(kind);
+    if (info.status === 'missing-file' || !info.file) throw rpcError('not_found', `There is no ${kind} file for epoch ${ws.epoch}`);
+    const key = `${info.generation}:${ws.epoch}:${info.file.size}:${ws.ws.id}`;
+    const hit = ledgerSources.get(kind);
+    if (hit && hit.key === key) return hit.src;
+    const src = new MockLedger({ kind, world: world.ledgers, fileName: info.file.name, fileSize: info.file.size, c: { gen: info.generation, epoch: ws.epoch }, env });
+    ledgerSources.set(kind, { key, src });
+    return src;
+  }
+
   // ---- live ----------------------------------------------------------------------------------------------
 
   function bump(info: ContractInfo): void {
@@ -259,26 +300,45 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
     if (info.file) info.file.mtimeMs = Date.now();
   }
 
-  function changeContracts(indices: number[]): void {
+  function bumpLedger(info: LedgerInfo): void {
+    info.generation += 1;
+    ledgerGenerations.set(info.kind, info.generation);
+    if (info.file) info.file.mtimeMs = Date.now();
+  }
+
+  function changeContracts(targets: (number | LedgerKind)[]): void {
     if (!state) return;
     const changed: ContractInfo[] = [];
-    for (const i of indices) {
-      const c = state.ws.contracts.find((x) => x.index === i);
+    const ledgers: LedgerInfo[] = [];
+    for (const t of targets) {
+      if (isLedgerKind(t)) {
+        const l = state.ws.ledgers.find((x) => x.kind === t);
+        if (l && l.file) {
+          bumpLedger(l);
+          ledgers.push(l);
+        }
+        continue;
+      }
+      const c = state.ws.contracts.find((x) => x.index === t);
       if (c && c.file) {
         bump(c);
         changed.push(c);
       }
     }
-    if (changed.length > 0) emit('contracts.changed', { workspaceId: state.ws.id, contracts: changed });
+    if (changed.length === 0 && ledgers.length === 0) return;
+    const payload: RpcEvents['contracts.changed'] = { workspaceId: state.ws.id, contracts: changed };
+    if (ledgers.length > 0) payload.ledgers = ledgers;
+    emit('contracts.changed', payload);
   }
 
   function tick(): void {
     if (!state) return;
-    const ok = state.ws.contracts.filter((c) => c.status === 'ok').map((c) => c.index);
-    if (ok.length === 0) return;
+    const ok: (number | LedgerKind)[] = state.ws.contracts.filter((c) => c.status === 'ok').map((c) => c.index);
+    const ledgers = state.ws.ledgers.filter((l) => l.status === 'ok').map((l) => l.kind);
+    if (ok.length === 0 && ledgers.length === 0) return;
     const n = rng.chance(0.35) ? 2 : 1;
-    const picked = new Set<number>();
-    for (let k = 0; k < n; k++) picked.add(rng.pick(ok));
+    const picked = new Set<number | LedgerKind>();
+    for (let k = 0; k < n; k++) picked.add(ledgers.length > 0 && rng.chance(0.25) ? rng.pick(ledgers) : ok.length > 0 ? rng.pick(ok) : rng.pick(ledgers));
     changeContracts([...picked]);
   }
 
@@ -392,8 +452,9 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
     'workspace.close': (): null => {
       state = null;
       sources.clear();
+      ledgerSources.clear();
       tableCache.clear();
-    keyCache.clear();
+      keyCache.clear();
       return null;
     },
 
@@ -411,44 +472,63 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
 
     'state.node': (params): NodeInfo => {
       const p = obj(params);
-      const src = source(int(p, 'contract', { min: 0 }), true);
+      const t = target(p);
+      if (isLedgerKind(t)) return ledger(t).node(str(p, 'id'));
+      const src = source(t, true);
       return nodeInfo(src, resolveNode(src, str(p, 'id')));
     },
 
     'state.children': (params) => {
       const p = obj(params);
-      const src = source(int(p, 'contract', { min: 0 }), true);
-      const ref = resolveNode(src, str(p, 'id'));
+      const t = target(p);
       const view = p.view ?? 'logical';
       if (view !== 'logical' && view !== 'raw') throw rpcError('invalid_params', "'view' must be 'logical' or 'raw'");
       const offset = int(p, 'offset', { min: 0, optional: true, def: 0 });
       const limit = int(p, 'limit', { min: 1, max: 1000, optional: true, def: 200 });
       if (p.hideEmpty !== undefined && typeof p.hideEmpty !== 'boolean') throw rpcError('invalid_params', "'hideEmpty' must be a boolean");
+      if (isLedgerKind(t)) return ledger(t).children(str(p, 'id'), view, offset, limit, p.hideEmpty === true);
+      const src = source(t, true);
+      const ref = resolveNode(src, str(p, 'id'));
       return pageChildren(src, ref, view, offset, limit, p.hideEmpty === true);
     },
 
     'state.bytes': (params) => {
       const p = obj(params);
-      const src = source(int(p, 'contract', { min: 0 }), false);
+      const t = target(p);
       const offset = int(p, 'offset', { min: 0 });
       const length = int(p, 'length', { min: 0, max: 65536 });
+      if (isLedgerKind(t)) {
+        const l = ledger(t);
+        const n = Math.max(0, Math.min(length, l.fileSize - offset));
+        return { offset, length: n, hex: n > 0 ? bytesToHex(l.readRaw(offset, n)) : '', fileSize: l.fileSize };
+      }
+      const src = source(t, false);
       const n = Math.max(0, Math.min(length, src.fileSize - offset));
       return { offset, length: n, hex: n > 0 ? bytesToHex(readRaw(src, offset, n)) : '', fileSize: src.fileSize };
     },
 
     'state.locate': (params): NodeLocation => {
       const p = obj(params);
-      const src = source(int(p, 'contract', { min: 0 }), true);
+      const t = target(p);
+      if (isLedgerKind(t)) return ledger(t).locate(int(p, 'offset', { min: 0 }));
+      const src = source(t, true);
       return locate(src, int(p, 'offset', { min: 0 }));
     },
 
     'state.reveal': (params): NodeReveal => {
       const p = obj(params);
-      const src = source(int(p, 'contract', { min: 0 }), true);
+      const t = target(p);
       const hasId = p.id !== undefined;
       const hasOffset = p.offset !== undefined;
       if (hasId === hasOffset) throw rpcError('invalid_params', "state.reveal needs exactly one of 'id' and 'offset'");
       if (p.hideEmpty !== undefined && typeof p.hideEmpty !== 'boolean') throw rpcError('invalid_params', "'hideEmpty' must be a boolean");
+      if (isLedgerKind(t)) {
+        const l = ledger(t);
+        const id = hasId ? str(p, 'id') : l.locate(int(p, 'offset', { min: 0 })).id;
+        l.node(id);
+        return l.reveal(id, p.hideEmpty === true);
+      }
+      const src = source(t, true);
       const id = hasId ? str(p, 'id') : locate(src, int(p, 'offset', { min: 0 })).id;
       // Same errors as state.node for an unknown id.
       resolveNode(src, id);
@@ -457,13 +537,14 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
 
     'state.search': (params): SearchResult => {
       const p = obj(params);
-      const contract = int(p, 'contract', { min: 0 });
+      const t = target(p);
       const query = str(p, 'query');
       const mode = (p.mode ?? 'auto') as string;
       if (!['auto', 'id', 'hex', 'int', 'text'].includes(mode)) throw rpcError('invalid_params', "'mode' must be one of auto, id, hex, int, text");
       const limit = int(p, 'limit', { min: 1, max: 5000, optional: true, def: 200 });
-      const info = contractInfo(contract);
-      const src = source(contract, false);
+      if (isLedgerKind(t)) return ledger(t).search(query, mode as SearchMode, limit);
+      const info = contractInfo(t);
+      const src = source(t, false);
       const schemaLess = info.status === 'schema-error' || info.status === 'unknown-contract';
       return runSearch(src, query, mode as SearchMode, limit, schemaLess);
     },
@@ -482,15 +563,16 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
 
     'table.describe': (params): TableInfo => {
       const p = obj(params);
-      const src = source(int(p, 'contract', { min: 0 }), true);
+      const t = target(p);
       const view = p.view === undefined ? undefined : str(p, 'view');
+      if (isLedgerKind(t)) return ledger(t).describeTable(str(p, 'id'), view);
+      const src = source(t, true);
       return describeTable(src, resolveNode(src, str(p, 'id')), view);
     },
 
     'table.rows': (params): TablePage => {
       const p = obj(params);
-      const contract = int(p, 'contract', { min: 0 });
-      const src = source(contract, true);
+      const contract = target(p);
       const q: TableQuery = {
         contract,
         id: str(p, 'id'),
@@ -513,9 +595,23 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
         if (typeof p.hideEmpty !== 'boolean') throw rpcError('invalid_params', "'hideEmpty' must be a boolean");
         q.hideEmpty = p.hideEmpty;
       }
+      if (isLedgerKind(contract)) return ledger(contract).rows(q);
+      const src = source(contract, true);
       const ref = resolveNode(src, q.id);
       const ts = buildTableSource(src, ref, q.view);
       return runTable(src, { rows: tableCache, keys: keyCache }, `${contract}:${src.c.gen}:${src.c.epoch}`, q, ts);
+    },
+
+    'ledger.summary': (params): LedgerSummary => {
+      const p = obj(params);
+      if (!isLedgerKind(p.kind)) throw rpcError('invalid_params', "'kind' must be 'spectrum' or 'universe'");
+      return clone(ledger(p.kind).summary());
+    },
+
+    'ledger.lookup': (params): LedgerLookup => {
+      const p = obj(params);
+      if (!isLedgerKind(p.kind)) throw rpcError('invalid_params', "'kind' must be 'spectrum' or 'universe'");
+      return ledger(p.kind).lookup(str(p, 'identity'));
     },
   };
 
@@ -561,10 +657,10 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
         liveCbs.delete(cb);
       };
     },
-    triggerChange(contractIndex) {
+    triggerChange(which) {
       if (!state) return;
-      if (contractIndex !== undefined) {
-        changeContracts([contractIndex]);
+      if (which !== undefined) {
+        changeContracts([which]);
         return;
       }
       const withFile = state.ws.contracts.filter((c) => c.file && c.status === 'ok').map((c) => c.index);
@@ -573,14 +669,18 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
     triggerWorkspaceUpdated() {
       if (!state) return;
       const gens = new Map([...generations].map(([k, v]) => [k, v + 1] as const));
-      const r = openWorkspace(world, fs, seed, repoFor(state.ws.request.core.repoUrl), state.ws.request, nextWorkspaceId, gens);
+      const lgens = new Map([...ledgerGenerations].map(([k, v]) => [k, v + 1] as const));
+      const r = openWorkspace(world, fs, seed, repoFor(state.ws.request.core.repoUrl), state.ws.request, nextWorkspaceId, gens, lgens);
       nextWorkspaceId++;
       generations.clear();
       for (const c of r.workspace.contracts) generations.set(c.index, c.generation);
+      ledgerGenerations.clear();
+      for (const l of r.workspace.ledgers) ledgerGenerations.set(l.kind, l.generation);
       state = { ws: r.workspace, epoch: r.epoch };
       sources.clear();
+      ledgerSources.clear();
       tableCache.clear();
-    keyCache.clear();
+      keyCache.clear();
       emit('workspace.updated', r.workspace);
     },
     getSim: () => ({ ...sim }),

@@ -4,7 +4,7 @@ import { memo } from "react";
 import { Value } from "@/features/values/Value";
 import { fmtBytes, fmtHexOffset } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { NodeInfo } from "@/rpc/contract";
+import type { NodeInfo, StateTarget } from "@/rpc/contract";
 import { useChildrenPage, useNode, CHILD_PAGE } from "@/store/data";
 import { ContainerBar } from "./ContainerBar";
 import { NodeIcon } from "./NodeIcon";
@@ -144,7 +144,7 @@ export const NodeRow = memo(function NodeRow({
 });
 
 interface RowProps {
-  contract: number;
+  contract: StateTarget;
   parentId: string | null;
   view: "logical" | "raw";
   childIndex: number;

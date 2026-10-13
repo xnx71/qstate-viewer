@@ -45,5 +45,6 @@ void registerFsMethods(ModuleContext& ctx);        // fs.list
 void registerCoreMethods(ModuleContext& ctx);      // core.sync, core.commits
 void registerWorkspaceMethods(ModuleContext& ctx); // workspace.*
 void registerStateMethods(ModuleContext& ctx);     // schema.types, state.*, table.*
+void registerLedgerMethods(ModuleContext& ctx);    // ledger.summary, ledger.lookup
 
 } // namespace qstate::service

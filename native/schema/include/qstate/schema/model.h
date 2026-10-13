@@ -34,6 +34,12 @@ enum class RoleKind : std::uint8_t {
     HashSet,    // QPI::HashSet<K, L, HashFunc>
     Collection, // QPI::Collection<T, L>
     LinkedList, // QPI::LinkedList<T, L>
+    // Ledger files (spectrum.EEE / universe.EEE): the record types of the core and the synthetic table types the
+    // extraction adds for them (see LedgerSchema).
+    EntityRecord,  // ::EntityRecord (64 bytes): publicKey, incomingAmount, outgoingAmount, counters, ticks
+    AssetRecord,   // ::AssetRecord (48 bytes): union of issuance / ownership / possession selected by `type`
+    SpectrumTable, // EntityRecord[SPECTRUM_CAPACITY]: open-addressing hash table, empty slot = zero publicKey
+    UniverseTable, // AssetRecord[ASSETS_CAPACITY]: open-addressing hash table, empty slot = type 0
 };
 
 struct Role {
@@ -116,15 +122,40 @@ struct ContractSchema {
     std::string error;       // non-empty when the layout could not be computed
 };
 
+// The two ledger files of an epoch: spectrum.EEE (all entities) and universe.EEE (all assets).
+enum class LedgerKind : std::uint8_t { Spectrum, Universe };
+const char* ledgerKindName(LedgerKind kind); // "spectrum" | "universe"
+
+// Layout of one ledger file: `capacity` records of `recordType` (open-addressing hash table, see RoleKind).
+// `rootType` is a synthetic array type `recordType[capacity]` (role SpectrumTable / UniverseTable) that the decoder
+// uses as the root of the ledger's state tree; it lives in Schema::types like every other type.
+struct LedgerSchema {
+    LedgerKind kind = LedgerKind::Spectrum;
+    std::string recordTypeName;     // "EntityRecord" | "AssetRecord"
+    TypeId recordType = kNoType;    // kNoType when the type is missing in this core version (see `error`)
+    TypeId rootType = kNoType;      // recordType[capacity]
+    std::uint64_t recordSize = 0;
+    std::uint64_t capacity = 0;     // SPECTRUM_CAPACITY / ASSETS_CAPACITY slots (0 when unknown)
+    std::uint64_t expectedSize = 0; // capacity * recordSize
+    std::string headerFile;         // definition site of the record type, relative to the core root
+    std::string error;              // non-empty when the ledger cannot be decoded with this core version
+};
+
 struct Schema {
     std::vector<Type> types; // types[i].id == i
     std::vector<ContractSchema> contracts; // ascending by index
+    std::vector<LedgerSchema> ledgers;     // spectrum, universe (always both entries once extraction ran)
     qstate::cpp::Diags diags;
 
     const Type& type(TypeId id) const { return types.at(id); }
     const ContractSchema* contract(std::uint32_t index) const {
         for (const ContractSchema& c : contracts)
             if (c.index == index) return &c;
+        return nullptr;
+    }
+    const LedgerSchema* ledger(LedgerKind kind) const {
+        for (const LedgerSchema& l : ledgers)
+            if (l.kind == kind) return &l;
         return nullptr;
     }
     const Field* findField(const Type& t, const std::string& name) const {

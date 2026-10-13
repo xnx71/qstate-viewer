@@ -2,6 +2,7 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <limits>
 #include <numeric>
 
 #include "gather.h"
@@ -20,8 +21,16 @@ using u128t = wide::u128;
 constexpr std::size_t kMaxColumns = 32;
 constexpr int kMaxDepth = 3;
 
-enum class CK : std::uint8_t { Int, Bool, Char, Enum, Float, Id, U128, DateTime, Bytes, Ptr, Composite, Index, Ordinal, Pov };
-enum class TK : std::uint8_t { Array, HashMap, HashSet, CollElems, CollPovs, List };
+// Ledger tables add four derived column kinds: Balance (incomingAmount - outgoingAmount of a spectrum record, 128-bit
+// safe), Asset (name of the issuance a universe record belongs to, resolved through the cached scan), IssuanceSlot (the
+// slot of that issuance: an issuance's own slot, an ownership's issuanceIndex member, a possession's resolved through
+// ownershipIndex -> ownership -> issuanceIndex) and LedgerType (the `type` byte of a universe record as an enum-like
+// value).
+enum class CK : std::uint8_t {
+    Int, Bool, Char, Enum, Float, Id, U128, DateTime, Bytes, Ptr, Composite, Index, Ordinal, Pov, Balance, Asset, IssuanceSlot,
+    LedgerType
+};
+enum class TK : std::uint8_t { Array, HashMap, HashSet, CollElems, CollPovs, List, Ledger };
 enum class Op : std::uint8_t { Eq, Ne, Lt, Le, Gt, Ge, Contains, Zero, NonZero };
 
 struct Column {
@@ -32,6 +41,9 @@ struct Column {
     std::uint32_t bitOff = 0, bitW = 0, bits = 0;
     bool isSigned = false;
     bool assetHint = false;
+    std::uint8_t altMask = 0;    // universe: bit (1 << type) of the record types the column applies to; 0 = all rows
+    bool contractHint = false;   // integer is a contract index: LeafValue.text = contract name
+    bool charAsInt = false;      // a `char` member that is a number (numberOfDecimalPlaces)
 };
 
 struct RowSet {
@@ -91,10 +103,10 @@ bool parseI128(const std::string& str, i128& out) {
 
 const char* ckKind(CK ck) {
     switch (ck) {
-    case CK::Int: case CK::Index: case CK::Ordinal: return "int";
+    case CK::Int: case CK::Index: case CK::Ordinal: case CK::Balance: case CK::Asset: case CK::IssuanceSlot: return "int";
     case CK::Bool: return "bool";
     case CK::Char: return "char";
-    case CK::Enum: return "enum";
+    case CK::Enum: case CK::LedgerType: return "enum";
     case CK::Float: return "float";
     case CK::Id: case CK::Pov: return "id";
     case CK::U128: return "u128";
@@ -108,10 +120,23 @@ const char* ckKind(CK ck) {
 
 std::size_t keyWords(const Column& c) {
     switch (c.ck) {
-    case CK::U128: case CK::Bytes: return 2;
+    case CK::U128: case CK::Bytes: case CK::Balance: return 2;
     case CK::Id: case CK::Pov: return 4;
     default: return 1;
     }
+}
+
+// Packed asset name (little endian, as contract states store it) with the text, for the derived `asset` column.
+LeafValue assetNameValue(const std::string& name) {
+    LeafValue lv;
+    lv.k = LeafValue::Kind::Int;
+    const std::uint64_t packed = fmt::assetNameValue(name).value_or(0);
+    lv.v = std::to_string(packed);
+    lv.isUnsigned = true;
+    lv.bits = 64;
+    lv.hex = fmt::hexNumber(packed, 64);
+    lv.text = name;
+    return lv;
 }
 
 } // namespace
@@ -141,6 +166,8 @@ public:
     std::shared_ptr<const CollInfo> ci;
     std::shared_ptr<const IndexList> listIds;
     std::vector<std::uint32_t> povSlots;
+    std::shared_ptr<const LedgerScan> ledger;                 // TK::Ledger
+    const std::vector<std::uint32_t>* ledgerRows = nullptr;   // slots of the selected ledger view
     std::uint64_t arrayCount = 0;
     std::string rowSeg; // "i" / "e" / "p"
     bool hideEmpty = false;
@@ -199,6 +226,57 @@ public:
     bool cellZero(const Column& c, const RowCtx& r, bool& known) const;
     std::uint64_t rowAbsOffset(std::uint64_t rowIdx) const { return rowsOff + rowIdx * rowSize; }
     NodeId rowId(std::uint64_t rowIdx) const { return joinId(container.id, rowSeg + ":" + std::to_string(rowIdx)); }
+
+    // ---- ledger helpers
+    const LedgerLayout& ledgerLayout() const { return I.idx.x(container.type).ledger; }
+    unsigned recordType(const RowCtx& r) const { // universe `type` byte of the row
+        const LedgerLayout& l = ledgerLayout();
+        return r.avail > l.typeOff ? r.data[l.typeOff] : 0u;
+    }
+    // False when the column belongs to another union alternative than the row holds.
+    bool applies(const Column& c, const RowCtx& r) const {
+        if (tk != TK::Ledger || c.altMask == 0) return true;
+        const unsigned t = recordType(r);
+        return t < 8 && (c.altMask & (1u << t));
+    }
+    // Asset name a universe row refers to ("" when unresolved).
+    std::string assetNameOf(const RowCtx& r) const {
+        const LedgerLayout& l = ledgerLayout();
+        if (r.avail < l.recordSize || !ledger) return {};
+        const unsigned t = recordType(r);
+        if (t == 1) return fmt::bytesText(r.data + l.alts[0].nameOff, 7).value_or(std::string());
+        if (t == 2 || t == 3) return ledger->assetName(t, loadLeN(r.data + l.alts[t - 1].indexOff, 4));
+        return {};
+    }
+    // Slot of the issuance a universe row belongs to (the derived `issuanceIndex` column); false when unresolved.
+    bool issuanceSlotOf(const RowCtx& r, std::uint64_t& out) const {
+        const LedgerLayout& l = ledgerLayout();
+        if (r.avail < l.recordSize || !ledger) return false;
+        const unsigned t = recordType(r);
+        if (t == 1) {
+            out = r.index;
+            return true;
+        }
+        if (t == 2) {
+            out = loadLeN(r.data + l.alts[1].indexOff, 4);
+            return true;
+        }
+        if (t == 3) {
+            const LedgerScan::Ownership* o = ledger->ownership(loadLeN(r.data + l.alts[2].indexOff, 4));
+            if (!o) return false;
+            out = o->issuanceIndex;
+            return true;
+        }
+        return false;
+    }
+    bool balanceOf(const RowCtx& r, i128& out) const {
+        const LedgerLayout& l = ledgerLayout();
+        if (r.avail < l.recordSize) return false;
+        out = static_cast<i128>(static_cast<std::int64_t>(loadLeN(r.data + l.incomingOff, 8))) -
+              static_cast<i128>(static_cast<std::int64_t>(loadLeN(r.data + l.outgoingOff, 8)));
+        return true;
+    }
+    void buildLedger(const TypeX& tx, const std::string& wantedView);
 };
 
 void TableEngine::flatten(std::vector<Column>& out, const std::string& id, const std::string& label, const char* group,
@@ -250,6 +328,8 @@ void TableEngine::flatten(std::vector<Column>& out, const std::string& id, const
         out.push_back(base(tx.byteElems ? CK::Bytes : CK::Composite));
         return;
     case Cls::Record:
+    case Cls::EntityRecord:
+    case Cls::AssetRecord:
         if (depth < kMaxDepth && !tx.members.empty()) {
             for (const Member& m : tx.members) {
                 const std::string sub = id + "." + m.name;
@@ -420,13 +500,152 @@ void TableEngine::build(const NodeId& id, const std::string& wantedView) {
         typedColumns("value", "value", l.valueType, l.valueOff, l.valueSize);
         break;
     }
+    case Cls::Ledger: buildLedger(tx, wantedView); break;
     default: throw NotFoundError("node is not tabular: " + id);
     }
+}
+
+// Ledger tables. Spectrum: one view "entities". Universe: "all" plus one view per record type. Columns are the record
+// members by name (ids "publicKey", "incomingAmount", ...), plus the derived "balance" (spectrum) and "$type" /
+// "asset" / "issuanceIndex" (universe). In the universe views a column that belongs to another alternative than a row
+// holds is n/a.
+void TableEngine::buildLedger(const TypeX& tx, const std::string& wantedView) {
+    const LedgerLayout& l = tx.ledger;
+    tk = TK::Ledger;
+    rowsOff = container.offset;
+    rowSize = l.recordSize;
+    elementType = l.recordType;
+    rowSeg = "i";
+    ledger = I.ledgerScan(container, q_);
+    ContainerStats cs;
+    cs.capacity = tx.count;
+    cs.population = ledger->live.size();
+    if (ledger->truncated) cs.warning = "the table extends beyond the end of the file";
+    stats = cs;
+
+    auto metaSlot = [&]() {
+        Column c;
+        c.ck = CK::Index;
+        c.info.typeName = "index";
+        addColumn(std::move(c), "$slot", "slot", "meta");
+    };
+    // A member as typed column(s) with id = member name; `patch` adjusts every column made from it.
+    auto memberColumns = [&](const Member& m, std::uint64_t base, const char* group, auto&& patch) {
+        std::vector<Column> tmp;
+        flatten(tmp, m.name, "", group, m.type, base + m.offset, m.size, kMaxDepth - 1, m.assetNameHint, m.bitOffset, m.bitWidth);
+        for (Column& c : tmp) {
+            if (c.info.label.empty()) c.info.label = m.name;
+            patch(c);
+            // same member in several alternatives (managingContractIndex, numberOfShares): one column
+            bool merged = false;
+            for (Column& existing : cols) {
+                if (existing.info.id == c.info.id && existing.rel == c.rel && existing.size == c.size) {
+                    existing.altMask |= c.altMask;
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) cols.push_back(std::move(c));
+        }
+    };
+
+    if (l.kind == schema::LedgerKind::Spectrum) {
+        views = {{"entities", "Entities"}};
+        view = "entities";
+        if (!wantedView.empty() && wantedView != view) throw NotFoundError("unknown view: " + wantedView);
+        ledgerRows = &ledger->live;
+        metaSlot();
+        for (const Member& m : I.idx.x(l.recordType).members) {
+            const bool key = m.name == "publicKey";
+            memberColumns(m, 0, key ? "key" : "value", [](Column&) {});
+            if (key) {
+                Column c;
+                c.ck = CK::Balance;
+                c.info.typeName = "sint128";
+                c.isSigned = true;
+                c.bits = 128;
+                addColumn(std::move(c), "balance", "balance", "value");
+            }
+        }
+    } else {
+        views = {{"all", "All"}, {"issuances", "Issuances"}, {"ownerships", "Ownerships"}, {"possessions", "Possessions"}};
+        view = wantedView.empty() ? "all" : wantedView;
+        unsigned only = 0; // 0 = every record type
+        if (view == "all") ledgerRows = &ledger->live;
+        else if (view == "issuances") only = 1;
+        else if (view == "ownerships") only = 2;
+        else if (view == "possessions") only = 3;
+        else throw NotFoundError("unknown view: " + wantedView);
+        if (only) ledgerRows = &ledger->byType[only - 1];
+        metaSlot();
+        if (only == 0) {
+            Column c;
+            c.ck = CK::LedgerType;
+            c.rel = l.typeOff;
+            c.size = 1;
+            c.bits = 8;
+            c.info.typeName = "unsigned char";
+            addColumn(std::move(c), "$type", "type", "meta");
+        }
+        // publicKey from the first alternative (same offset in all of them)
+        const TypeX& alt0 = I.idx.x(l.alts[0].type);
+        for (const Member& m : alt0.members) {
+            if (m.name == "publicKey") memberColumns(m, l.alts[0].offset, "key", [](Column&) {});
+        }
+        {
+            Column c;
+            c.ck = CK::Asset;
+            c.info.typeName = "asset";
+            addColumn(std::move(c), "asset", "asset", "value");
+        }
+        // `issuanceIndex` is derived for every record type (an ownership's member, a possession's resolved through its
+        // ownership, an issuance's own slot), so the ownership member itself is not emitted as a column.
+        auto hasColumn = [&](const char* id) {
+            for (const Column& c : cols)
+                if (c.info.id == id) return true;
+            return false;
+        };
+        auto issuanceSlotColumn = [&]() {
+            if (hasColumn("issuanceIndex")) return;
+            Column c;
+            c.ck = CK::IssuanceSlot;
+            c.info.typeName = "unsigned int";
+            c.bits = 32;
+            addColumn(std::move(c), "issuanceIndex", "issuanceIndex", "value");
+        };
+        for (unsigned t = 1; t <= 3; ++t) {
+            if (only && only != t) continue;
+            const LedgerLayout::Alternative& a = l.alts[t - 1];
+            for (const Member& m : I.idx.x(a.type).members) {
+                if (m.name == "publicKey" || m.name == "type" || m.name == "padding") continue;
+                if (t == 2 && a.offset + m.offset == l.alts[1].offset + l.alts[1].indexOff) continue; // derived below
+                memberColumns(m, a.offset, "value", [&](Column& c) {
+                    c.altMask = static_cast<std::uint8_t>(1u << t);
+                    if (m.name == "managingContractIndex") c.contractHint = true;
+                    if (c.ck == CK::Char && m.name == "numberOfDecimalPlaces") {
+                        c.ck = CK::Int;
+                        c.charAsInt = true;
+                        c.isSigned = true;
+                        c.bits = 8;
+                        c.info.kind = ckKind(CK::Int);
+                    }
+                });
+                if (t >= 2 && m.name == "managingContractIndex") issuanceSlotColumn(); // right after the contract
+            }
+            if (t >= 2) issuanceSlotColumn(); // a layout without managingContractIndex: after the members
+        }
+    }
+    totalRows = ledgerRows->size();
 }
 
 RowSet TableEngine::rows() const {
     RowSet rs;
     switch (tk) {
+    case TK::Ledger:
+        rs.keep = ledger;
+        rs.ids = ledgerRows;
+        rs.n = ledgerRows->size();
+        break;
     case TK::Array:
         if (hideEmpty) {
             auto ne = I.nonEmptyIndex(rowsOff, rowSize, arrayCount, q_);
@@ -483,9 +702,73 @@ LeafValue TableEngine::cell(const Column& c, const RowCtx& r) const {
     };
     if (c.ck == CK::Index) return uintValue(r.index);
     if (c.ck == CK::Ordinal) return uintValue(r.ordinal);
+    if (!applies(c, r)) {
+        const char* t = Formatter::assetTypeName(recordType(r));
+        return LeafValue::unavailable(std::string("not in ") + (t ? std::string("an ") + t + " record" : "this record type"));
+    }
+    if (c.ck == CK::Balance) {
+        i128 v;
+        if (!balanceOf(r, v)) return LeafValue::unavailable("beyond end of file");
+        LeafValue lv;
+        lv.k = LeafValue::Kind::Int;
+        lv.v = Formatter::decimalI128(v);
+        lv.isUnsigned = false;
+        const bool fits = v >= static_cast<i128>(std::numeric_limits<std::int64_t>::min()) &&
+                          v <= static_cast<i128>(std::numeric_limits<std::int64_t>::max());
+        lv.bits = fits ? 64 : 128;
+        const u128t u = static_cast<u128t>(v);
+        lv.hex = fits ? fmt::hexNumber(static_cast<std::uint64_t>(u), 64)
+                      : "0x" + fmt::hexNumber(static_cast<std::uint64_t>(u >> 64), 64).substr(2) +
+                            fmt::hexNumber(static_cast<std::uint64_t>(u), 64).substr(2);
+        return lv;
+    }
+    if (c.ck == CK::Asset) {
+        const std::string name = assetNameOf(r);
+        if (name.empty()) {
+            const unsigned t = recordType(r);
+            if ((t == 2 || t == 3) && r.avail >= ledgerLayout().recordSize) {
+                return LeafValue::unavailable(std::string(t == 2 ? "issuance #" : "ownership #") +
+                                              std::to_string(loadLeN(r.data + ledgerLayout().alts[t - 1].indexOff, 4)) + " not found");
+            }
+            return LeafValue::unavailable("no asset");
+        }
+        return assetNameValue(name);
+    }
+    if (c.ck == CK::IssuanceSlot) {
+        std::uint64_t slot;
+        if (issuanceSlotOf(r, slot)) {
+            LeafValue lv = uintValue(slot);
+            lv.bits = 32;
+            lv.hex = fmt::hexNumber(slot, 32);
+            return lv;
+        }
+        if (recordType(r) == 3 && r.avail >= ledgerLayout().recordSize)
+            return LeafValue::unavailable("ownership #" + std::to_string(loadLeN(r.data + ledgerLayout().alts[2].indexOff, 4)) +
+                                          " not found");
+        return LeafValue::unavailable("no issuance");
+    }
+    if (c.ck == CK::LedgerType) return I.fmt.assetTypeValue(recordType(r));
     if (c.rel + c.size > r.avail) return LeafValue::unavailable("beyond end of file");
     const std::uint8_t* p = r.data + c.rel;
     const std::size_t avail = r.avail - static_cast<std::size_t>(c.rel);
+    if (c.charAsInt) {
+        LeafValue lv;
+        lv.k = LeafValue::Kind::Int;
+        lv.v = std::to_string(static_cast<int>(static_cast<std::int8_t>(p[0])));
+        lv.isUnsigned = false;
+        lv.bits = 8;
+        lv.hex = fmt::hexNumber(p[0], 8);
+        return lv;
+    }
+    if (c.contractHint && c.ck == CK::Int) {
+        LeafValue lv = I.fmt.leaf(c.type, p, avail, false, c.bitOff, c.bitW);
+        if (lv.k == LeafValue::Kind::Int) {
+            const std::uint64_t index = loadLeN(p, static_cast<std::size_t>(std::min<std::uint64_t>(c.size, 8)));
+            if (index < 1024)
+                if (const std::string name = I.fmt.contractName(static_cast<std::uint32_t>(index)); !name.empty()) lv.text = name;
+        }
+        return lv;
+    }
     switch (c.ck) {
     case CK::Pov: {
         const std::uint64_t slot = loadLeN(p, 8);
@@ -502,9 +785,18 @@ LeafValue TableEngine::cell(const Column& c, const RowCtx& r) const {
 }
 
 bool TableEngine::numericOf(const Column& c, const RowCtx& r, i128& out) const {
+    if (!applies(c, r)) return false;
     switch (c.ck) {
     case CK::Index: out = r.index; return true;
     case CK::Ordinal: out = r.ordinal; return true;
+    case CK::Balance: return balanceOf(r, out);
+    case CK::LedgerType: out = recordType(r); return true;
+    case CK::IssuanceSlot: {
+        std::uint64_t slot;
+        if (!issuanceSlotOf(r, slot)) return false;
+        out = slot;
+        return true;
+    }
     case CK::Int: case CK::Enum: case CK::Char: case CK::Bool: case CK::Ptr: case CK::DateTime: {
         if (c.rel + c.size > r.avail || c.size > 8) return false;
         std::uint64_t raw = loadLeN(r.data + c.rel, static_cast<std::size_t>(c.size));
@@ -534,8 +826,23 @@ bool TableEngine::numericOf(const Column& c, const RowCtx& r, i128& out) const {
 void TableEngine::sortKey(const Column& c, const RowCtx& r, std::uint64_t* out) const {
     const std::size_t w = keyWords(c);
     for (std::size_t i = 0; i < w; ++i) out[i] = 0;
+    if (!applies(c, r)) return;
     switch (c.ck) {
     case CK::Composite: return;
+    case CK::Balance: {
+        i128 v;
+        if (!balanceOf(r, v)) return;
+        const u128t u = static_cast<u128t>(v);
+        out[0] = static_cast<std::uint64_t>(u >> 64) ^ (std::uint64_t{1} << 63); // order-preserving: flip the sign bit
+        out[1] = static_cast<std::uint64_t>(u);
+        return;
+    }
+    case CK::Asset: {
+        const std::string name = assetNameOf(r); // text order, first character most significant
+        for (std::size_t i = 0; i < 8 && i < name.size(); ++i)
+            out[0] |= static_cast<std::uint64_t>(static_cast<unsigned char>(name[i])) << (56 - 8 * i);
+        return;
+    }
     case CK::Pov: {
         if (c.rel + 8 > r.avail || !ci) return;
         if (const PovRec* pov = ci->findPov(loadLeN(r.data + c.rel, 8)))
@@ -589,6 +896,7 @@ void TableEngine::sortKey(const Column& c, const RowCtx& r, std::uint64_t* out) 
 }
 
 std::string TableEngine::cellText(const Column& c, const RowCtx& r) const {
+    if (c.ck == CK::Asset) return assetNameOf(r);
     const LeafValue v = cell(c, r);
     using K = LeafValue::Kind;
     switch (v.k) {
@@ -606,6 +914,22 @@ bool TableEngine::cellZero(const Column& c, const RowCtx& r, bool& known) const 
     known = true;
     if (c.ck == CK::Index) return r.index == 0;
     if (c.ck == CK::Ordinal) return r.ordinal == 0;
+    if (!applies(c, r)) {
+        known = false;
+        return false;
+    }
+    if (c.ck == CK::Balance) {
+        i128 v;
+        known = balanceOf(r, v);
+        return known && v == 0;
+    }
+    if (c.ck == CK::Asset) return assetNameOf(r).empty();
+    if (c.ck == CK::IssuanceSlot) {
+        std::uint64_t slot;
+        known = issuanceSlotOf(r, slot);
+        return known && slot == 0;
+    }
+    if (c.ck == CK::LedgerType) return recordType(r) == 0;
     if (c.ck == CK::Pov) {
         std::uint64_t k[4];
         sortKey(c, r, k);
@@ -661,7 +985,23 @@ TableEngine::Filter TableEngine::compileFilter(const FilterSpec& f) const {
         return out;
     }
     switch (c.ck) {
-    case CK::Int: case CK::Index: case CK::Ordinal: case CK::Ptr: {
+    case CK::Asset: break; // text compare on the resolved name
+    case CK::LedgerType: {
+        if (parseI128(value, out.num)) {
+            out.numOk = true;
+        } else {
+            const std::string v = lower(value);
+            for (unsigned t = 0; t < 4; ++t) {
+                if (v == Formatter::assetTypeName(t)) {
+                    out.num = t;
+                    out.numOk = true;
+                }
+            }
+        }
+        if (!out.numOk) throw InvalidArgumentError("not a record type (issuance, ownership, possession) or number: " + value);
+        break;
+    }
+    case CK::Int: case CK::Index: case CK::Ordinal: case CK::Ptr: case CK::Balance: case CK::IssuanceSlot: {
         if (parseI128(value, out.num)) {
             out.numOk = true;
         } else if (c.assetHint) {
@@ -786,10 +1126,16 @@ bool TableEngine::evalFilter(const Filter& f, const RowCtx& r) const {
     };
     switch (c.ck) {
     case CK::Int: case CK::Index: case CK::Ordinal: case CK::Ptr: case CK::Enum: case CK::Char: case CK::Bool:
-    case CK::DateTime: {
+    case CK::DateTime: case CK::Balance: case CK::IssuanceSlot: case CK::LedgerType: {
         i128 v;
         if (!numericOf(c, r, v)) return false;
         return cmpRes(v < f.num ? -1 : (v > f.num ? 1 : 0));
+    }
+    case CK::Asset: {
+        const std::string name = assetNameOf(r);
+        if (name.empty()) return false;
+        const int cmp = name.compare(f.text);
+        return cmpRes(cmp < 0 ? -1 : (cmp > 0 ? 1 : 0));
     }
     case CK::Float: {
         if (c.rel + c.size > r.avail) return false;

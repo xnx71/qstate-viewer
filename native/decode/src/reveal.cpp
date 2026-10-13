@@ -98,11 +98,34 @@ Impl::ChildPos Impl::childPosition(const Ref& p, char kind, std::string_view arg
         const auto mi = memberIndex(tx.members, arg);
         if (!mi) return fail();
         pos.index = *mi;
-        pos.raw = tx.cls != Cls::Record && tx.cls != Cls::Union; // container members only exist in the raw view
+        // container members (and the union of a universe record) only exist in the raw view
+        pos.raw = tx.cls != Cls::Record && tx.cls != Cls::Union && tx.cls != Cls::EntityRecord;
         return pos;
+    }
+    case 'a': {
+        if (tx.cls != Cls::AssetRecord) return fail();
+        const std::vector<Ref> kids = assetLogicalChildren(p);
+        for (std::size_t i = 0; i < kids.size(); ++i) {
+            if (kids[i].label == arg) {
+                pos.index = i;
+                return pos;
+            }
+        }
+        return fail();
     }
     case 'i': {
         if (!parseU64(arg, n) || n >= tx.count) return fail();
+        if (tx.cls == Cls::Ledger) {
+            // logical list = live records; an empty slot is only listed in the raw view (all slots)
+            const auto scan = ledgerScan(p, q);
+            if (const auto r = rankAscending(scan->live, n)) {
+                pos.index = *r;
+            } else {
+                pos.index = n;
+                pos.raw = true;
+            }
+            return pos;
+        }
         if (hideEmpty) {
             const auto ne = nonEmptyIndex(p.offset, tx.elemSize, tx.count, q);
             const auto r = rankAscending(ne->ids, n);

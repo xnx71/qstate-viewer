@@ -3,13 +3,16 @@ import { FileWarningIcon, SearchIcon, XIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { FlashOverlay } from "@/features/values/FlashOverlay";
 import { useChanged } from "@/features/values/useChanged";
+import { LedgerSection, matchesLedger } from "@/features/ledger/LedgerSidebarSection";
 import { fmtBytes } from "@/lib/format";
+import { parseTarget } from "@/lib/target";
 import { cn } from "@/lib/utils";
 import type { ContractInfo } from "@/rpc/contract";
-import { selectContract, openWorkspace } from "@/store/actions";
-import { changeStampsAtom, contractsAtom, diagnosticsOpenAtom, pendingChangesAtom, selectedContractAtom, workspaceAtom } from "@/store/workspace";
+import { selectTarget, openWorkspace } from "@/store/actions";
+import { changeStampsAtom, contractsAtom, diagnosticsOpenAtom, isPending, ledgersAtom, pendingChangesAtom, selectedTargetAtom, workspaceAtom } from "@/store/workspace";
 import { store } from "@/store/store";
 import { contractMenu } from "@/features/contextmenu/builders/contract";
+import { ledgerMenu } from "@/features/contextmenu/builders/ledger";
 import { useContextMenu } from "@/features/contextmenu/useContextMenu";
 import { contractDisplayName, matchesContract } from "./names";
 import { STATUS_META, StatusBadge } from "./StatusBadge";
@@ -27,6 +30,7 @@ function ContractRow({ c, selected, pending, onSelect }: { c: ContractInfo; sele
       role="option"
       aria-selected={selected}
       data-contract={c.index}
+      data-target={c.index}
       onClick={onSelect}
       title={c.statusMessage ?? `${m.label}: ${m.hint}`}
       className={cn(
@@ -55,22 +59,31 @@ function ContractRow({ c, selected, pending, onSelect }: { c: ContractInfo; sele
 
 export function ContractSidebar() {
   const contracts = useAtomValue(contractsAtom);
-  const selected = useAtomValue(selectedContractAtom);
+  const ledgers = useAtomValue(ledgersAtom);
+  const selected = useAtomValue(selectedTargetAtom);
   const ws = useAtomValue(workspaceAtom);
   const pending = useAtomValue(pendingChangesAtom);
   useAtomValue(changeStampsAtom);
   const [q, setQ] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
   const filtered = useMemo(() => contracts.filter((c) => matchesContract(c, q)), [contracts, q]);
+  const filteredLedgers = useMemo(() => ledgers.filter((l) => matchesLedger(l, q)), [ledgers, q]);
   const diag = ws?.diagnostics ?? [];
   const errs = diag.filter((d) => d.severity === "error").length;
   const warns = diag.filter((d) => d.severity === "warning").length;
+  const total = contracts.length + ledgers.length;
+  const shown = filtered.length + filteredLedgers.length;
 
   const ctx = useContextMenu((e) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-contract]");
-    const idx = el ? Number(el.dataset["contract"]) : NaN;
-    const c = contracts.find((x) => x.index === idx);
-    return c ? contractMenu(c, () => selectContract(c.index)) : null;
+    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-target]");
+    const t = parseTarget(el?.dataset["target"]);
+    if (t === null) return null;
+    if (typeof t === "number") {
+      const c = contracts.find((x) => x.index === t);
+      return c ? contractMenu(c, () => selectTarget(c.index)) : null;
+    }
+    const l = ledgers.find((x) => x.kind === t);
+    return l ? ledgerMenu(l) : null;
   });
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -80,11 +93,11 @@ export function ContractSidebar() {
     const cur = items.findIndex((el) => el === document.activeElement);
     const next = items[Math.max(0, Math.min(items.length - 1, cur + (e.key === "ArrowDown" ? 1 : -1)))];
     next?.focus();
-    if (next) {
-      const idx = Number(next.dataset["contract"]);
-      if (!Number.isNaN(idx)) selectContract(idx);
-    }
+    const t = parseTarget(next?.dataset["target"]);
+    if (t !== null) selectTarget(t);
   };
+
+  const first = filtered[0]?.index ?? filteredLedgers[0]?.kind ?? null;
 
   return (
     <aside className="flex h-full min-h-0 flex-col bg-sidebar-bg text-fg" aria-label="Contracts">
@@ -104,13 +117,14 @@ export function ContractSidebar() {
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") setQ("");
-              if (e.key === "Enter" && filtered[0]) selectContract(filtered[0].index);
+              if (e.key === "Enter" && first !== null) selectTarget(first);
               if (e.key === "ArrowDown") {
                 e.preventDefault();
                 listRef.current?.querySelector<HTMLButtonElement>("[role=option]")?.focus();
               }
             }}
-            placeholder="Filter contracts"
+            placeholder="Filter…"
+            title="Filter contracts and ledgers by name or index"
             aria-label="Filter contracts"
             className="h-9 w-full rounded-lg border border-line-input bg-surface-1 pr-8 pl-8 text-data outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
           />
@@ -122,25 +136,21 @@ export function ContractSidebar() {
         </div>
       </div>
       <div ref={listRef} role="listbox" aria-label="Contract list" onKeyDown={onKey} {...ctx} className="min-h-0 flex-1 overflow-y-auto p-2">
-        {filtered.length === 0 && <p className="px-2 py-8 text-center text-data text-fg-muted">No contract matches “{q}”.</p>}
+        {shown === 0 && total > 0 && <p className="px-2 py-8 text-center text-data text-fg-muted">Nothing matches “{q}”.</p>}
+        {contracts.length === 0 && ledgers.length > 0 && !q && <p className="px-3 py-2 text-meta text-fg-muted">No contract files: this workspace is a single ledger file.</p>}
         <div className="space-y-0.5">
           {filtered.map((c) => (
-            <ContractRow
-              key={c.index}
-              c={c}
-              selected={c.index === selected}
-              pending={pending.contracts.includes(c.index)}
-              onSelect={() => selectContract(c.index)}
-            />
+            <ContractRow key={c.index} c={c} selected={c.index === selected} pending={isPending(pending, c.index)} onSelect={() => selectTarget(c.index)} />
           ))}
         </div>
+        <LedgerSection ledgers={filteredLedgers} selected={typeof selected === "string" ? selected : null} isPending={(l) => isPending(pending, l.kind)} onSelect={(l) => selectTarget(l.kind)} />
       </div>
       {ws && (
         <div className="space-y-2 border-t p-3 text-data">
           <div className="flex items-center justify-between gap-2">
             <span className="text-fg-muted">Epoch</span>
             {ws.state.scope === "file" ? (
-              <span className="font-mono" title={ws.contracts[0]?.file?.path}>
+              <span className="font-mono" title={ws.contracts[0]?.file?.path ?? ws.ledgers?.[0]?.file?.path}>
                 {ws.state.epoch} · single file
               </span>
             ) : (

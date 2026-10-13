@@ -37,7 +37,11 @@ enum class Cls : std::uint8_t {
     BitArray,
     HashMap, HashSet, Collection, LinkedList,
     Int, Bool, Char, Enum, Float, Ptr, Id, Bit, U128, DateTime,
-    Opaque             // anything else with bytes but no decoding (odd primitive sizes)
+    Opaque,            // anything else with bytes but no decoding (odd primitive sizes)
+    // Ledger files (spectrum.EEE / universe.EEE), see LedgerLayout.
+    Ledger,            // the whole table: recordType[capacity], open addressing by publicKey (elem / count / elemSize set)
+    EntityRecord,      // one spectrum record (a Record with members; `ledger` holds the field offsets)
+    AssetRecord        // one universe record (a Record whose single member is the issuance / ownership / possession union)
 };
 
 struct Member {
@@ -76,12 +80,39 @@ struct ListLayout {
     std::uint64_t flagsOff = 0, headOff = 0, tailOff = 0, freeHeadOff = 0, nextUnusedOff = 0, popOff = 0;
 };
 
+// Field offsets of the ledger record types (both the table and its record type carry a copy). Universe records are a
+// union of three alternatives selected by the `type` byte (1 issuance, 2 ownership, 3 possession); every alternative
+// starts with publicKey (32 bytes) and type (1 byte).
+struct LedgerLayout {
+    schema::LedgerKind kind = schema::LedgerKind::Spectrum;
+    schema::TypeId recordType = schema::kNoType;
+    std::uint64_t recordSize = 0;
+    std::uint64_t capacity = 0;       // table only
+    std::uint64_t keyOff = 0;         // publicKey
+    // spectrum
+    std::uint64_t incomingOff = 0, outgoingOff = 0; // long long
+    // universe
+    std::uint64_t typeOff = 0;        // unsigned char
+    std::string unionField;           // "varStruct"
+    schema::TypeId unionType = schema::kNoType;
+    struct Alternative {
+        std::string name;             // issuance | ownership | possession
+        schema::TypeId type = schema::kNoType;
+        std::uint64_t offset = 0;     // of the alternative inside the record (its members are relative to it)
+        // issuance
+        std::uint64_t nameOff = 0, decimalsOff = 0, uomOff = 0;
+        // ownership / possession
+        std::uint64_t contractOff = 0, indexOff = 0, sharesOff = 0; // indexOff: issuanceIndex / ownershipIndex (u32)
+    };
+    Alternative alts[3];              // [type - 1]
+};
+
 struct TypeX {
     Cls cls = Cls::Opaque;
     std::uint64_t size = 0;
     std::vector<Member> members;          // Record / Union / container records: base members first, declaration order
-    schema::TypeId elem = schema::kNoType; // CArray / ArrayRole element
-    std::uint64_t count = 0;               // CArray / ArrayRole element count; BitArray: bits
+    schema::TypeId elem = schema::kNoType; // CArray / ArrayRole / Ledger element
+    std::uint64_t count = 0;               // CArray / ArrayRole / Ledger element count; BitArray: bits
     std::uint64_t elemSize = 0;
     bool byteElems = false;                // elements are 1-byte integers / chars (text-like)
     std::uint32_t intBits = 0;             // Int / Enum / Char: width in bits
@@ -89,6 +120,7 @@ struct TypeX {
     HashLayout hash;
     CollectionLayout coll;
     ListLayout list;
+    LedgerLayout ledger;                   // Ledger / EntityRecord / AssetRecord
     std::string layoutError;               // container degraded to Record when non-empty
 };
 
@@ -106,6 +138,8 @@ private:
     void buildType(schema::TypeId id);
     void buildMembers(schema::TypeId id, TypeX& tx);
     void buildContainer(schema::TypeId id, TypeX& tx);
+    // Validates a ledger record type; returns the error ("" = ok) and fills `out`.
+    std::string buildLedgerRecord(schema::TypeId id, schema::LedgerKind kind, LedgerLayout& out) const;
 
     std::shared_ptr<const schema::Schema> schema_;
     std::vector<TypeX> types_;

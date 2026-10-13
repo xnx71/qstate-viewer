@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@/rpc/client";
 import { isAbortError, toRpcError } from "@/rpc/errors";
-import type { RpcError, TableRow } from "@/rpc/contract";
+import type { RpcError, StateTarget, TableRow } from "@/rpc/contract";
 import { buildTableQuery, querySignature, type TableQueryState } from "@/lib/filters";
 import type { ScrollDir } from "@/lib/pageWindow";
 import { usePageLoader, type LoaderPage } from "@/lib/usePageLoader";
@@ -21,7 +21,7 @@ export interface TableWindow {
 }
 
 interface Options {
-  contract: number;
+  contract: StateTarget;
   id: string;
   query: TableQueryState;
   /** First / last visible row index. */

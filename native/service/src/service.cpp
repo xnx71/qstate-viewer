@@ -23,6 +23,7 @@ constexpr ModuleFn kModules[] = {
     registerCoreMethods,
     registerWorkspaceMethods,
     registerStateMethods,
+    registerLedgerMethods,
 };
 
 } // namespace
@@ -50,6 +51,8 @@ const std::vector<std::string>& Service::contractMethods() {
         "state.digest",
         "table.describe",
         "table.rows",
+        "ledger.summary",
+        "ledger.lookup",
     };
     return methods;
 }

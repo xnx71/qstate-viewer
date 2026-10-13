@@ -54,9 +54,11 @@ The workspace dialog has three parts:
    **auto**: the newest tag whose `#define EPOCH` equals the epoch of the state files (the sample files
    `contract0001.229` ... are epoch 229, which is core `v1.303.2`). When no tag has that epoch, auto falls back to the
    head of the default branch and says so.
-3. **State**: a directory with `contractNNNN.EEE` files (all contracts of an epoch), or one such file (then only that
-   contract is shown). Directory listings mark the state files and the epochs they belong to; the app watches the state
-   files and updates the view when the node rewrites one.
+3. **State**: a directory with `contractNNNN.EEE` files (all contracts of an epoch, plus the ledger files
+   `spectrum.EEE` / `universe.EEE` when present: every entity with its balance, every asset issuance / ownership /
+   possession, with aggregates and an identity lookup), or one such file (then only that contract or ledger is shown).
+   Directory listings mark the state and ledger files and the epochs they belong to; the app watches them and updates
+   the view when the node rewrites one.
 
 Recent workspaces and UI preferences are kept in the settings file (`~/.config/qstate-viewer/settings.json`).
 

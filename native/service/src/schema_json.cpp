@@ -51,6 +51,11 @@ json roleJson(const schema::Role& r) {
     case RoleKind::HashSet: return {{"kind", "hashSet"}, {"key", r.key}, {"capacity", r.capacity}};
     case RoleKind::Collection: return {{"kind", "collection"}, {"element", r.element}, {"capacity", r.capacity}};
     case RoleKind::LinkedList: return {{"kind", "linkedList"}, {"element", r.element}, {"capacity", r.capacity}};
+    // The synthetic ledger tables are arrays of records to the UI; the record roles have no contract.ts counterpart.
+    case RoleKind::SpectrumTable:
+    case RoleKind::UniverseTable: return {{"kind", "array"}, {"element", r.element}, {"capacity", r.capacity}};
+    case RoleKind::EntityRecord:
+    case RoleKind::AssetRecord: return nullptr;
     }
     return nullptr;
 }

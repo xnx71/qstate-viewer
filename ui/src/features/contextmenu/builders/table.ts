@@ -8,6 +8,7 @@ import {
   FilterIcon,
   FilterXIcon,
   ListFilterIcon,
+  ListTreeIcon,
   LocateFixedIcon,
   MaximizeIcon,
   MinusCircleIcon,
@@ -17,7 +18,8 @@ import {
   TableIcon,
 } from "lucide-react";
 import { makeFilter, opsForKind } from "@/lib/filters";
-import type { CellValue, FilterSpec, SortSpec, TableColumn } from "@/rpc/contract";
+import type { CellValue, FilterSpec, SortSpec, StateTarget, TableColumn } from "@/rpc/contract";
+import { ledgerRowItems, type LedgerRowTarget } from "./ledger";
 import { realDeps, type MenuDeps } from "../deps";
 import { contractOf, nodeSubmenu, valueItems, type NodeTarget } from "./node";
 import { item, SEP, sub, unless, type MenuEntry } from "../types";
@@ -47,7 +49,7 @@ export function filterValueOfCell(c: CellValue | undefined): string | null {
 }
 
 export interface TableCellTarget {
-  contract: number;
+  contract: StateTarget;
   column: TableColumn;
   cell: CellValue | undefined;
   filters: readonly FilterSpec[];
@@ -62,15 +64,21 @@ export interface TableCellTarget {
   jumpToTree: () => unknown;
   /** The row's node (for the Node submenu); its `select` makes the row the inspector selection. */
   node: NodeTarget;
+  /** Rows of a ledger table: the record (identity, amount, type) for the ledger specific actions. */
+  ledger?: LedgerRowTarget;
 }
 
 export function tableCellMenu(t: TableCellTarget, deps: MenuDeps = realDeps): MenuEntry[] {
   const out: MenuEntry[] = [];
   const col = t.column;
-  out.push(...valueItems(t.cell, deps, "Copy cell"));
+  out.push(...valueItems(t.cell, deps, "Copy cell", { lookupSubmenu: true }));
   const target = contractOf(t.cell, deps);
   if (target) out.push(item("goto-contract", `Go to contract ${target.name}`, () => deps.gotoContract(target.index), { icon: SquareArrowOutUpRightIcon }));
   out.push(sub("copy-row", "Copy row", [item("copy-row-tsv", "As TSV", t.copyRowTsv, { icon: TableIcon }), item("copy-row-json", "As JSON", t.copyRowJson, { icon: CopyIcon })], { icon: CopyIcon }));
+  if (t.ledger) {
+    out.push(SEP);
+    out.push(sub("record", `Record #${t.ledger.slot}`, ledgerRowItems(t.ledger, deps), { icon: ListTreeIcon }));
+  }
   out.push(SEP);
   const v = filterValueOfCell(t.cell);
   const ops = opsForKind(col.kind);

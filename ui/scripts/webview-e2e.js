@@ -312,6 +312,10 @@
         return !!$("[data-status=ok]", e);
       }).length;
       check(ok === 29, "contracts with status ok: " + ok);
+      var ledgerRows = $$("[role=option][data-ledger]");
+      check(ledgerRows.length === 2, "LEDGER section lists spectrum and universe: " + ledgerRows.length);
+      var ws0 = await rpc("workspace.get");
+      check(ws0.ledgers && ws0.ledgers.length === 2 && ws0.ledgers.every(function (l) { return l.status === "ok" && l.file; }), "workspace.ledgers: both files ok: " + JSON.stringify((ws0.ledgers || []).map(function (l) { return [l.kind, l.status, l.file && l.file.size]; })));
       var chip = $("[data-testid=workspace-chip]").innerText;
       log("header: " + chip.replace(/\s+/g, " "));
       check(/epoch 229/.test(chip), "header shows epoch 229: " + chip);
@@ -576,6 +580,9 @@
       await until(function () {
         return !$("[data-ctx-menu]");
       }, "menu closed with Escape");
+      // leave the find panel closed: the later screenshots show the tables at full height
+      var closeFind = $("[aria-label='Close find panel']");
+      if (closeFind) closeFind.click();
     });
 
     await step("scrolling: no skeleton-only viewport, visited rows never turn into placeholders (QX tree, 2M-slot raw _povs)", async function () {
@@ -685,6 +692,197 @@
       st.on = false;
       // restore the logical view for the later steps
       if ($("[aria-label='Show raw members']")) $("[aria-label='Show raw members']").click();
+    });
+
+    // ---- ledgers (real epoch-229 files) ---------------------------------------------------------------------------
+    var SPECTRUM_POP = 670379;
+    var contract1 = null;
+    var spectrumSummary = null;
+    var cellText = function (row, col) {
+      var c = $("[role=gridcell][data-col='" + col + "']", row);
+      return c ? c.innerText.trim() : "";
+    };
+    var gridRows = function () {
+      return $$("[role=grid] [role=row][aria-rowindex]").sort(function (a, b) {
+        return Number(a.getAttribute("aria-rowindex")) - Number(b.getAttribute("aria-rowindex"));
+      });
+    };
+    var noPlaceholders = function () {
+      return $$("[role=grid] [data-placeholder]").length === 0 && gridRows().length > 3;
+    };
+    // ids below a record are the backend's business (spectrum "i:1/f:publicKey", universe "i:1/a:publicKey"): find a
+    // member by its label among the record's logical children
+    var memberOf = async function (target, id, label) {
+      var page = await rpc("state.children", { contract: target, id: id, limit: 50 });
+      var hit = page.items.find(function (i) {
+        return i.label === label;
+      });
+      check(hit, "member '" + label + "' of " + target + " " + id + " (children: " + page.items.map(function (i) { return i.id; }).join(", ") + ")");
+      return hit;
+    };
+
+    await step("spectrum: opens on its entities table with the summary (population 670,379), contract 1 sits at slot 1", async function () {
+      $("[role=option][data-target='spectrum']").click();
+      await until(function () {
+        return $("[data-testid=ledger-view-spectrum] [role=grid] [role=row][aria-rowindex] [role=gridcell]");
+      }, "spectrum table", 120000);
+      await until(function () {
+        return $("[data-testid=ledger-population]");
+      }, "spectrum summary (ledger.summary scan)", 120000);
+      spectrumSummary = await rpc("ledger.summary", { kind: "spectrum" });
+      check(spectrumSummary.kind === "spectrum" && spectrumSummary.population === SPECTRUM_POP, "ledger.summary population " + spectrumSummary.population);
+      check($("[data-testid=ledger-population]").innerText.indexOf("670,379") >= 0, "summary card shows 670,379: " + $("[data-testid=ledger-population]").innerText.replace(/\s+/g, " "));
+      check(/670,379|670\.4k|670k/.test(($("[data-testid=ledger-pop-spectrum]") || { innerText: "" }).innerText), "sidebar population: " + ($("[data-testid=ledger-pop-spectrum]") || { innerText: "?" }).innerText);
+      var pk = await memberOf("spectrum", "i:1", "publicKey");
+      check(pk.value && pk.value.k === "id" && pk.value.contract && pk.value.contract.index === 1, "slot 1 holds the contract-1 identity: " + JSON.stringify(pk.value));
+      contract1 = pk.value.identity;
+      var rec = await rpc("state.node", { contract: "spectrum", id: "i:1" });
+      check(/balance [\d,]+/.test(rec.preview || ""), "record preview carries the balance: " + rec.preview);
+      log("contract 1 (" + (pk.value.contract.name || "?") + ", " + pk.id + "): " + rec.preview);
+      var describe = await rpc("table.describe", { contract: "spectrum", id: "" });
+      var keyCol = describe.columns.find(function (c) { return c.kind === "id" && c.group === "key"; });
+      check(keyCol && keyCol.id === "publicKey", "the key column of the entities view is publicKey: " + JSON.stringify(describe.columns.map(function (c) { return c.id; })));
+      check($("[role=columnheader][data-col=publicKey]"), "publicKey column header");
+      await until(noPlaceholders, "rows", 60000);
+      // the key column is drawn by the identity renderer (keyed on the column kind / group, not on its id)
+      check($$("[role=gridcell][data-col=publicKey] [title]").length > 0, "identity cells carry the identity renderer");
+      await shot("12-spectrum");
+    });
+
+    await step("spectrum: sorted by balance desc, the top row is the summary's maxBalance holder", async function () {
+      var header = function () {
+        return $("[role=columnheader][data-col=balance]");
+      };
+      for (var i = 0; i < 3 && header().getAttribute("aria-sort") !== "descending"; i++) {
+        header().click();
+        await sleep(300);
+      }
+      check(header().getAttribute("aria-sort") === "descending", "balance sorted descending");
+      await until(function () {
+        return /sorted by balance/.test(document.body.innerText) && noPlaceholders();
+      }, "sorted rows", 60000);
+      var top = gridRows()[0];
+      check(num(cellText(top, "balance")) === num(spectrumSummary.maxBalance.balance), "top balance " + cellText(top, "balance") + " == maxBalance " + spectrumSummary.maxBalance.balance);
+      check(num(cellText(top, "$slot")) === spectrumSummary.maxBalance.slot, "top row slot " + cellText(top, "$slot") + " == maxBalance.slot " + spectrumSummary.maxBalance.slot);
+      var api = await rpc("table.rows", { contract: "spectrum", id: "", offset: 0, limit: 5, sort: [{ column: "balance", desc: true }] });
+      var rows = gridRows();
+      for (var k = 0; k < 4; k++) check(num(cellText(rows[k], "$slot")) === api.rows[k].index, "row " + k + " slot " + cellText(rows[k], "$slot") + " vs " + api.rows[k].index);
+      await shot("13-spectrum-sorted");
+    });
+
+    await step("spectrum: lookup of the contract-1 identity -> slot 1 (hash lookup), the record in the inspector", async function () {
+      var box = $("input[aria-label='Look up identity in spectrum']");
+      check(box, "lookup box");
+      setValue(box, contract1);
+      key(box, "Enter");
+      await until(function () {
+        return $("[data-testid=lookup-hits] [data-hit='1']");
+      }, "lookup hit at slot 1", 30000);
+      var api = await rpc("ledger.lookup", { kind: "spectrum", identity: contract1 });
+      check(api.hits.length === 1 && api.hits[0].slot === 1, "ledger.lookup: " + JSON.stringify(api.hits));
+      log("lookup probes: " + api.probes + ", hits: " + JSON.stringify(api.hits));
+      check(/hash lookup/.test($("[data-testid=lookup-hits]").innerText), "the hits say hash lookup: " + $("[data-testid=lookup-hits]").innerText.replace(/\s+/g, " "));
+      await until(function () {
+        var insp = $("[aria-label='Inspector']");
+        return insp && /EntityRecord/.test(insp.innerText) && /#1\b|\[1\]|QX/.test(insp.innerText);
+      }, "record i:1 selected in the inspector", 20000);
+      await shot("14-spectrum-lookup");
+    });
+
+    var universe = null;
+    await step("universe: 147 issuances (NOST at slot 0), ownership slot 1 holds 1,610,000,000 shares", async function () {
+      $("[role=option][data-target='universe']").click();
+      await until(function () {
+        return $("[data-testid=assets-table] [data-asset-row]") && $("[data-testid=ledger-view-universe] [role=grid] [role=row][aria-rowindex] [role=gridcell]");
+      }, "universe table + assets", 120000);
+      universe = await rpc("ledger.summary", { kind: "universe" });
+      check(universe.issuances === 147, "147 issuances: " + universe.issuances);
+      check(universe.assets.length === 147 && universe.assets[0].slot === 0 && universe.assets[0].name === "NOST", "assets[0] = NOST at slot 0: " + JSON.stringify(universe.assets[0]));
+      check(/147/.test($("[data-testid=ledger-issuances]").innerText), "issuances tile: " + $("[data-testid=ledger-issuances]").innerText.replace(/\s+/g, " "));
+      // the assets sub-table is sorted by owners and virtualized: the filter box brings NOST into view
+      var assetBox = $("[data-testid=assets-table] input[aria-label='Filter assets']");
+      check(assetBox, "assets filter box");
+      setValue(assetBox, "NOST");
+      await until(function () {
+        return $("[data-asset-row='NOST'][data-asset-slot='0']");
+      }, "NOST row of the assets table at slot 0 (after filtering the assets)", 5000);
+      check($$("[data-testid=assets-table] [data-asset-row]").length < 10, "the filter narrows the assets: " + $$("[data-testid=assets-table] [data-asset-row]").length + " rows");
+      log("universe: " + universe.ownerships + " ownerships, " + universe.possessions + " possessions");
+      var slot1 = await rpc("state.node", { contract: "universe", id: "i:1" });
+      check(/1,?610,?000,?000/.test(slot1.preview || ""), "slot 1 preview: " + slot1.preview);
+      var own = await rpc("table.rows", { contract: "universe", id: "", view: "ownerships", offset: 0, limit: 1, filters: [{ column: "$slot", op: "eq", value: "1" }] });
+      var describe = await rpc("table.describe", { contract: "universe", id: "", view: "ownerships" });
+      var sharesCol = describe.columns.findIndex(function (c) { return c.id === "numberOfShares"; });
+      check(own.total === 1 && own.rows[0].cells[sharesCol].v === "1610000000", "ownership at slot 1: " + JSON.stringify(own.rows[0] && own.rows[0].cells[sharesCol]));
+      await until(noPlaceholders, "issuance rows", 60000);
+      await shot("15-universe");
+    });
+
+    await step("universe: click NOST -> ownerships filtered by issuanceIndex = 0", async function () {
+      $("[data-asset-row='NOST']").click();
+      await until(function () {
+        return $("[data-testid=asset-filter-chip]");
+      }, "asset filter chip");
+      await until(function () {
+        return $$("[data-testid=filter-chip]").some(function (c) { return /issuanceIndex = 0/.test(c.innerText); });
+      }, "issuanceIndex filter chip");
+      var api = await rpc("table.rows", { contract: "universe", id: "", view: "ownerships", offset: 0, limit: 1, filters: [{ column: "issuanceIndex", op: "eq", value: "0" }] });
+      await until(function () {
+        return new RegExp("^" + api.total.toLocaleString("en-US").replace(/,/g, ",") + " of").test(($("[data-testid=table-total]") || { innerText: "" }).innerText.trim());
+      }, api.total + " filtered rows", 60000);
+      var nost = universe.assets[0];
+      check(api.total === nost.ownerships, "filtered total " + api.total + " == summary ownerships of NOST " + nost.ownerships);
+      await until(noPlaceholders, "filtered rows", 60000);
+      check(gridRows().every(function (r) { return cellText(r, "asset") === "NOST"; }), "every visible row is a NOST ownership");
+      await shot("16-universe-nost-ownerships");
+      // the asset filter carries over to the possessions (their derived issuanceIndex column) when the backend has it
+      var poss = await rpc("table.describe", { contract: "universe", id: "", view: "possessions" });
+      if (poss.columns.some(function (c) { return c.id === "issuanceIndex"; })) {
+        $("[data-testid=ledger-possessions]").click();
+        await until(function () {
+          return $("[data-testid=asset-filter-chip]") && $$("[data-testid=filter-chip]").some(function (c) { return /issuanceIndex = 0/.test(c.innerText); });
+        }, "asset filter kept on the possessions view");
+        var papi = await rpc("table.rows", { contract: "universe", id: "", view: "possessions", offset: 0, limit: 1, filters: [{ column: "issuanceIndex", op: "eq", value: "0" }] });
+        await until(function () {
+          return new RegExp("^" + papi.total.toLocaleString("en-US") + " of").test(($("[data-testid=table-total]") || { innerText: "" }).innerText.trim());
+        }, papi.total + " filtered possessions", 60000);
+        check(papi.total === nost.possessions, "filtered possessions " + papi.total + " == summary possessions of NOST " + nost.possessions);
+        await until(noPlaceholders, "possession rows", 60000);
+        check(gridRows().every(function (r) { return cellText(r, "asset") === "NOST"; }), "every visible row is a NOST possession");
+        await shot("16b-universe-nost-possessions");
+        $("[data-testid=ledger-ownerships]").click();
+        await until(function () {
+          return $$("[data-testid=filter-chip]").some(function (c) { return /issuanceIndex = 0/.test(c.innerText); });
+        }, "back on the ownerships with the asset filter");
+      } else log("possessions have no issuanceIndex column in this build: the carry-over is not checked");
+    });
+
+    await step("universe: reveal the slot-1 record in the tree (via the lookup hits), Bytes tab shows its 48 bytes", async function () {
+      var pk = await memberOf("universe", "i:1", "publicKey");
+      check(pk.value && pk.value.k === "id", "slot 1 publicKey (" + pk.id + "): " + JSON.stringify(pk.value));
+      var box = $("input[aria-label='Look up identity in universe']");
+      setValue(box, pk.value.identity);
+      key(box, "Enter");
+      var hit = await until(function () {
+        return $("[data-testid=lookup-hits] [data-hit='1']");
+      }, "lookup hit at slot 1", 30000);
+      hit.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true })); // Shift+click: reveal in the tree
+      await until(function () {
+        var r = treeRow("i:1");
+        return r && r.selected && r.visible;
+      }, "record i:1 revealed and selected in the tree", 30000);
+      check(/ownership/.test(treeRow("i:1").text), "the tree row says ownership: " + treeRow("i:1").text.replace(/\s+/g, " "));
+      await shot("17-universe-record-tree");
+      $$("[role=tab]").find(function (e) { return e.textContent.trim() === "Bytes"; }).click();
+      var first = await rpc("state.bytes", { contract: "universe", offset: 48, length: 8 });
+      await until(function () {
+        return ($("[aria-label='Hex dump']") || { innerText: "" }).innerText.replace(/\s+/g, "").toLowerCase().indexOf(first.hex.slice(0, 16)) >= 0;
+      }, "hex dump with the record's bytes", 30000);
+      check(first.fileSize === 805306368, "universe file size " + first.fileSize);
+      await shot("18-universe-record-bytes");
+      $$("[role=tab]").find(function (e) { return e.textContent.trim() === "Overview"; }).click();
+      $("[role=option][data-contract='1']").click();
+      await sleep(400);
     });
 
     await step("light theme", async function () {

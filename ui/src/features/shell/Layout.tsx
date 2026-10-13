@@ -6,7 +6,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { prefsAtom, updatePrefs } from "@/store/prefs";
 import { store } from "@/store/store";
 import { searchAtom } from "@/store/search";
-import { selectedContractAtom } from "@/store/workspace";
+import { selectedTargetAtom } from "@/store/workspace";
 import { CenterPane } from "./CenterPane";
 import { ErrorBoundary } from "./ErrorBoundary";
 
@@ -22,7 +22,7 @@ const save = (layout: Layout) => updatePrefs({ layout: { ...store.get(prefsAtom)
 export function Layout() {
   const prefs = useAtomValue(prefsAtom);
   const find = useAtomValue(searchAtom).open;
-  const selected = useAtomValue(selectedContractAtom);
+  const selected = useAtomValue(selectedTargetAtom);
   const saved = prefs.layout;
   return (
     <ResizablePanelGroup orientation="horizontal" id="main-h" defaultLayout={pick(saved, ["sidebar", "center", "inspector"])} onLayoutChanged={save}>

@@ -109,10 +109,12 @@ struct FsEntry {
     std::optional<int64_t> mtimeMs;
     // Files named contractNNNN.EEE: contract index and epoch extension.
     std::optional<std::pair<uint32_t, uint32_t>> state;
+    // Files named spectrum.EEE / universe.EEE: kind (FileNameKind::Spectrum / Universe) and epoch extension.
+    std::optional<std::pair<FileNameKind, uint32_t>> ledger;
 };
 
 struct PathHints {
-    std::vector<uint32_t> stateEpochs;  // epochs of contractNNNN.EEE files directly inside, ascending
+    std::vector<uint32_t> stateEpochs;  // epochs of contractNNNN.EEE / spectrum.EEE / universe.EEE files directly inside, ascending
 };
 
 struct FsListing {

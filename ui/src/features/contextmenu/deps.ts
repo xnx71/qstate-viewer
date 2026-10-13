@@ -4,8 +4,9 @@ import { toast } from "sonner";
 import { copyDigest } from "@/features/palette/CommandPalette";
 import { copyText } from "@/lib/clipboard";
 import { cellJson } from "@/lib/format";
-import type { ContractInfo, NodeId, NodeInfo } from "@/rpc/contract";
-import { reloadWorkspace, selectContract } from "@/store/actions";
+import type { ContractInfo, LedgerInfo, LedgerKind, NodeId, NodeInfo, StateTarget } from "@/rpc/contract";
+import { reloadWorkspace, selectTarget } from "@/store/actions";
+import { findReferences, lookupInLedger, openLedgerTable, patchLedgerUi, selectLedger, showLedgerTree } from "@/store/ledger";
 import { fetchChildren, fetchNode } from "@/store/data";
 import { hexJumpAtom } from "@/store/hex";
 import { prefsAtom, resolveTheme, setUiSize, themeAtom, toggleTheme, uiSizeAtom, updatePrefs, type Prefs } from "@/store/prefs";
@@ -13,14 +14,27 @@ import { findValue, openSearch, type SearchMode } from "@/store/search";
 import { store } from "@/store/store";
 import { centerTabAtom, closeTable, openTable } from "@/store/table";
 import { collapseChildren, expandChildrenOneLevel, resetForHideEmpty, revealNode, selectNode, setSelectedView, type PathItem } from "@/store/tree";
-import { contractsAtom, helpDialogAtom, openDialogAtom, paletteModeAtom, paletteOpenAtom } from "@/store/workspace";
+import { contractsAtom, helpDialogAtom, ledgersAtom, openDialogAtom, paletteModeAtom, paletteOpenAtom } from "@/store/workspace";
 import type { UiSize } from "@/lib/sizes";
 
 export interface MenuDeps {
   copy(text: string, what: string): Promise<boolean>;
   find(query: string, mode: SearchMode): Promise<void>;
   contracts(): ContractInfo[];
+  /** The ledgers of the shown epoch (both kinds, possibly "missing-file"). */
+  ledgers(): LedgerInfo[];
   gotoContract(index: number): void;
+  /** Switch to a ledger, look an identity up there and reveal the first hit. */
+  lookupInLedger(kind: LedgerKind, identity: string): Promise<void>;
+  openLedger(kind: LedgerKind): void;
+  showLedgerTree(kind: LedgerKind): void;
+  showLedgerSummary(kind: LedgerKind): void;
+  /** Open the palette in "look up identity in <ledger>" mode. */
+  promptLookup(kind: LedgerKind): void;
+  /** Universe: show the records pointing at a slot (ownerships of an issuance, possessions of an ownership). */
+  findReferences(slot: number, type: number): void;
+  /** Select a record and show its bytes. */
+  showRecordBytes(target: StateTarget, id: NodeId): Promise<void>;
   /** Show the Bytes tab of the inspector (the selected node's range is highlighted there). */
   showBytesTab(): void;
   showOverviewTab(): void;
@@ -28,16 +42,16 @@ export interface MenuDeps {
   hexJump(offset: number): void;
   /** Open the "go to byte offset" prompt of the command palette. */
   promptOffset(): void;
-  openTable(contract: number, id: NodeId, label: string, typeName: string): void;
-  setView(contract: number, view: "logical" | "raw"): Promise<boolean>;
+  openTable(contract: StateTarget, id: NodeId, label: string, typeName: string): void;
+  setView(contract: StateTarget, view: "logical" | "raw"): Promise<boolean>;
   hideEmpty(): boolean;
-  toggleHideEmpty(contract: number): void;
-  resolveNode(contract: number, id: NodeId): Promise<NodeInfo>;
-  nodeJson(contract: number, info: NodeInfo): Promise<string>;
-  revealInTree(contract: number, id: NodeId): Promise<unknown>;
-  select(contract: number, id: NodeId, path: PathItem[]): void;
-  expandChildren(contract: number, path: number[]): Promise<void>;
-  collapseChildren(contract: number, path: number[]): void;
+  toggleHideEmpty(contract: StateTarget): void;
+  resolveNode(contract: StateTarget, id: NodeId): Promise<NodeInfo>;
+  nodeJson(contract: StateTarget, info: NodeInfo): Promise<string>;
+  revealInTree(contract: StateTarget, id: NodeId): Promise<unknown>;
+  select(contract: StateTarget, id: NodeId, path: PathItem[]): void;
+  expandChildren(contract: StateTarget, path: number[]): Promise<void>;
+  collapseChildren(contract: StateTarget, path: number[]): void;
   // application level
   reloadWorkspace(): Promise<void>;
   changeWorkspace(): void;
@@ -59,7 +73,7 @@ export interface MenuDeps {
 
 const MAX_JSON_CHILDREN = 64;
 
-async function nodeJson(contract: number, info: NodeInfo): Promise<string> {
+async function nodeJson(contract: StateTarget, info: NodeInfo): Promise<string> {
   const base = { name: info.label, type: info.typeName, kind: info.kind, offset: info.offset, size: info.size };
   if (info.value) return JSON.stringify({ ...base, value: cellJson(info.value) }, null, 2);
   if (info.childCount === 0) return JSON.stringify({ ...base, value: info.preview ?? null }, null, 2);
@@ -77,7 +91,29 @@ export const realDeps: MenuDeps = {
   },
   find: (query, mode) => findValue(query, mode),
   contracts: () => store.get(contractsAtom),
-  gotoContract: (index) => selectContract(index),
+  ledgers: () => store.get(ledgersAtom),
+  gotoContract: (index) => selectTarget(index),
+  lookupInLedger: (kind, identity) => lookupInLedger(kind, identity),
+  openLedger: (kind) => selectLedger(kind),
+  showLedgerTree: (kind) => showLedgerTree(kind),
+  showLedgerSummary: (kind) => {
+    selectLedger(kind);
+    patchLedgerUi(kind, { summaryCollapsed: false });
+  },
+  promptLookup: (kind) => {
+    store.set(paletteModeAtom, { lookup: kind });
+    store.set(paletteOpenAtom, true);
+  },
+  findReferences: (slot, type) => {
+    if (!findReferences(slot, type)) toast.message("Nothing references a possession");
+    else openLedgerTable("universe");
+  },
+  showRecordBytes: async (target, id) => {
+    const info = await fetchNode(target, id);
+    selectNode(target, { id, path: [{ id: "", label: typeof target === "number" ? "state" : target }, { id, label: info.label }] });
+    updatePrefs({ inspectorTab: "bytes" } satisfies Partial<Prefs>);
+    store.set(hexJumpAtom, { offset: info.offset, nonce: Date.now() });
+  },
   showBytesTab: () => updatePrefs({ inspectorTab: "bytes" } satisfies Partial<Prefs>),
   showOverviewTab: () => updatePrefs({ inspectorTab: "overview" } satisfies Partial<Prefs>),
   hexJump: (offset) => store.set(hexJumpAtom, { offset, nonce: Date.now() }),

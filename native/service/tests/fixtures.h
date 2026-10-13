@@ -74,10 +74,30 @@ inline void appendBytes(const fs::path& path, const std::vector<std::uint8_t>& b
 //   contract 0: Contract0State { long long reserves[2]; }                   16 bytes
 //   contract 1: AA, A::StateData { Array<Row, 8> rows; u64 counter; }       328 bytes (Row = { id owner; u64 amount; } 40)
 //   contract 2: BB, B::StateData { u64 x; }                                 8 bytes (in src/contracts/B.h)
+//   ledgers: EntityRecord / AssetRecord as in the core, SPECTRUM_CAPACITY = ASSETS_CAPACITY = 64 slots
+//            (spectrum.EEE = 4096 bytes, universe.EEE = 3072 bytes)
+constexpr unsigned kFakeLedgerCapacity = 64;
+
 inline std::string fakeContractDef() {
     return R"(
 #include "contracts/B.h"
+#define SPECTRUM_DEPTH 6
+#define SPECTRUM_CAPACITY (1ULL << SPECTRUM_DEPTH)
+#define ASSETS_CAPACITY 0x40ULL
 struct m256i { unsigned long long u64[4]; };
+struct EntityRecord {
+    m256i publicKey;
+    long long incomingAmount, outgoingAmount;
+    unsigned int numberOfIncomingTransfers, numberOfOutgoingTransfers;
+    unsigned int latestIncomingTransferTick, latestOutgoingTransferTick;
+};
+struct AssetRecord {
+    union {
+        struct { m256i publicKey; unsigned char type; char name[7]; char numberOfDecimalPlaces; char unitOfMeasurement[7]; } issuance;
+        struct { m256i publicKey; unsigned char type; char padding[1]; unsigned short managingContractIndex; unsigned int issuanceIndex; long long numberOfShares; } ownership;
+        struct { m256i publicKey; unsigned char type; char padding[1]; unsigned short managingContractIndex; unsigned int ownershipIndex; long long numberOfShares; } possession;
+    } varStruct;
+};
 namespace QPI {
 template <typename T, unsigned long long L> struct Array { T _values[L]; };
 using id = ::m256i;
@@ -172,6 +192,72 @@ inline void writeFakeState(const fs::path& dir, unsigned ext = 5) {
     put64(320, 7);
     writeBytes(file(1), a);
     writeBytes(file(2), patternBytes(8, 9));
+}
+
+// 32-byte key from four little-endian words.
+inline std::vector<std::uint8_t> keyBytes(std::uint64_t w0, std::uint64_t w1 = 0, std::uint64_t w2 = 0, std::uint64_t w3 = 0) {
+    std::vector<std::uint8_t> v(32);
+    const std::uint64_t w[4] = {w0, w1, w2, w3};
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 8; ++j) v[static_cast<std::size_t>(8 * i + j)] = static_cast<std::uint8_t>((w[i] >> (8 * j)) & 0xFF);
+    return v;
+}
+
+inline void putLe(std::vector<std::uint8_t>& b, std::size_t off, std::uint64_t v, int n) {
+    for (int i = 0; i < n; ++i) b[off + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>((v >> (8 * i)) & 0xFF);
+}
+
+// Ledger files of the fake core (64 slots, hashed by key.u32[0] & 63 with linear probing):
+//   spectrum: contract 1 at slot 1 (balance 900), key (5, 11) at slot 5 (balance 500), key (69, 1) collides -> slot 6 (50)
+//   universe: NOST issued by key (3, 5) at slot 3, owned by key (10, 6) at slot 10 (2500 shares, contract 1),
+//             possessed by key (74, 7) at slot 11
+inline std::vector<std::uint8_t> fakeSpectrum() {
+    std::vector<std::uint8_t> b(kFakeLedgerCapacity * 64, 0);
+    auto add = [&](std::uint32_t slot, const std::vector<std::uint8_t>& key, std::int64_t in, std::int64_t out) {
+        std::copy(key.begin(), key.end(), b.begin() + slot * 64);
+        putLe(b, slot * 64 + 32, static_cast<std::uint64_t>(in), 8);
+        putLe(b, slot * 64 + 40, static_cast<std::uint64_t>(out), 8);
+        putLe(b, slot * 64 + 48, 1, 4);
+    };
+    add(1, keyBytes(1), 1000, 100);
+    add(5, keyBytes(5, 11), 500, 0);
+    add(6, keyBytes(69, 1), 70, 20);
+    return b;
+}
+
+inline std::vector<std::uint8_t> fakeUniverse() {
+    std::vector<std::uint8_t> b(kFakeLedgerCapacity * 48, 0);
+    auto rec = [&](std::uint32_t slot, const std::vector<std::uint8_t>& key, std::uint8_t type) {
+        std::copy(key.begin(), key.end(), b.begin() + slot * 48);
+        b[slot * 48 + 32] = type;
+    };
+    rec(3, keyBytes(3, 5), 1);
+    const std::string name = "NOST";
+    std::copy(name.begin(), name.end(), b.begin() + 3 * 48 + 33);
+    rec(10, keyBytes(10, 6), 2);
+    putLe(b, 10 * 48 + 34, 1, 2);
+    putLe(b, 10 * 48 + 36, 3, 4);
+    putLe(b, 10 * 48 + 40, 2500, 8);
+    rec(11, keyBytes(74, 7), 3);
+    putLe(b, 11 * 48 + 34, 1, 2);
+    putLe(b, 11 * 48 + 36, 10, 4);
+    putLe(b, 11 * 48 + 40, 2500, 8);
+    return b;
+}
+
+inline void writeFakeLedgers(const fs::path& dir, unsigned ext = 5) {
+    char name[40];
+    std::snprintf(name, sizeof name, "spectrum.%03u", ext);
+    writeBytes(dir / name, fakeSpectrum());
+    std::snprintf(name, sizeof name, "universe.%03u", ext);
+    writeBytes(dir / name, fakeUniverse());
+}
+
+inline json ledgerOf(const json& workspace, const std::string& kind) {
+    for (const json& l : workspace["ledgers"]) {
+        if (l["kind"] == kind) return l;
+    }
+    return json();
 }
 
 // Collects bus events.

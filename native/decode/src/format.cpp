@@ -481,11 +481,80 @@ std::optional<std::string> Formatter::proposalSummary(TypeId t, const std::uint8
     return s;
 }
 
+// ---- ledger records ------------------------------------------------------------------------------------------------
+
+const char* Formatter::assetTypeName(unsigned type) {
+    switch (type) {
+    case 0: return "empty";
+    case 1: return "issuance";
+    case 2: return "ownership";
+    case 3: return "possession";
+    default: return nullptr;
+    }
+}
+
+LeafValue Formatter::assetTypeValue(unsigned type) const {
+    LeafValue v;
+    v.k = LeafValue::Kind::Enum;
+    v.v = std::to_string(type);
+    if (const char* n = assetTypeName(type)) v.name = n;
+    return v;
+}
+
+std::string Formatter::decimalI128(wide::i128 v) {
+    const bool neg = v < 0;
+    const wide::u128 mag = neg ? wide::u128(-v) : wide::u128(v);
+    const std::uint64_t lo = static_cast<std::uint64_t>(mag), hi = static_cast<std::uint64_t>(mag >> 64);
+    return (neg ? "-" : "") + fmt::decimal128(hi, lo);
+}
+
+std::string Formatter::entityPreview(const LedgerLayout& l, const std::uint8_t* p, std::size_t avail) const {
+    if (avail < l.recordSize) return "\xE2\x80\xA6";
+    bool zero = true;
+    for (int i = 0; i < 32 && zero; ++i) zero = p[l.keyOff + i] == 0;
+    if (zero) return "empty slot";
+    const wide::i128 balance = static_cast<wide::i128>(static_cast<std::int64_t>(fmt::loadLe(p + l.incomingOff, 8))) -
+                               static_cast<wide::i128>(static_cast<std::int64_t>(fmt::loadLe(p + l.outgoingOff, 8)));
+    return shortText(idValue(p + l.keyOff)) + ", balance " + decimalI128(balance);
+}
+
+std::string Formatter::assetPreview(const LedgerLayout& l, const std::uint8_t* p, std::size_t avail,
+                                    const std::string& assetName) const {
+    if (avail < l.recordSize) return "\xE2\x80\xA6";
+    const unsigned type = p[l.typeOff];
+    if (type == 0) return "empty slot";
+    if (type > 3) return "type " + std::to_string(type) + " (unknown)";
+    const LedgerLayout::Alternative& a = l.alts[type - 1];
+    const std::string who = shortText(idValue(p + l.keyOff));
+    if (type == 1) {
+        const std::string name = fmt::bytesText(p + a.nameOff, 7).value_or(fmt::hexBytes(p + a.nameOff, 7));
+        const int decimals = static_cast<std::int8_t>(p[a.decimalsOff]);
+        return "issuance " + name + ", " + std::to_string(decimals) + " decimals, issuer " + who;
+    }
+    const std::int64_t shares = static_cast<std::int64_t>(fmt::loadLe(p + a.sharesOff, 8));
+    const std::uint64_t index = fmt::loadLe(p + a.indexOff, 4);
+    const unsigned contract = static_cast<unsigned>(fmt::loadLe(p + a.contractOff, 2));
+    std::string s = std::string(type == 2 ? "ownership" : "possession") + " of ";
+    s += assetName.empty() ? std::string(type == 2 ? "issuance #" : "ownership #") + std::to_string(index) : assetName;
+    std::string managing = "contract " + std::to_string(contract);
+    if (const std::string cn = contractName(contract); !cn.empty()) managing += " (" + cn + ")";
+    s += ": " + std::to_string(shares) + " shares, ";
+    // The holder is often the managing contract itself (contract shares held by the contract): say it once.
+    if (who == managing) s += "held and managed by " + managing;
+    else s += "held by " + who + ", managed by " + managing;
+    return s;
+}
+
 std::string Formatter::preview(TypeId t, const std::uint8_t* p, std::size_t avail, bool assetHint, int depth) const {
     if (!idx_.valid(t)) return "?";
     const TypeX& tx = idx_.x(t);
     const std::string ell = "\xE2\x80\xA6";
     switch (tx.cls) {
+    case Cls::EntityRecord: return entityPreview(tx.ledger, p, avail);
+    case Cls::AssetRecord: return assetPreview(tx.ledger, p, avail);
+    case Cls::Ledger:
+        return std::string(tx.ledger.kind == schema::LedgerKind::Spectrum ? "spectrum" : "universe") + " table, capacity " +
+               std::to_string(tx.count);
     case Cls::Record:
     case Cls::Union: {
         if (auto ps = proposalSummary(t, p, avail)) return *ps;

@@ -338,7 +338,8 @@ FsListResult listDirectory(const std::string& pathArg, bool showHidden) {
         if (ec) break;
         const std::string name = it->path().filename().string();
         const auto parsed = parseStateFileName(name);
-        if (parsed.kind == FileNameKind::ContractState) epochs[*parsed.ext] = true;
+        const bool ledgerFile = parsed.kind == FileNameKind::Spectrum || parsed.kind == FileNameKind::Universe;
+        if (parsed.kind == FileNameKind::ContractState || ledgerFile) epochs[*parsed.ext] = true;
         if (!showHidden && !name.empty() && name[0] == '.') continue;
         FsEntry e;
         e.name = name;
@@ -349,6 +350,7 @@ FsListResult listDirectory(const std::string& pathArg, bool showHidden) {
             e.size = es.size;
             e.mtimeMs = toMs(es.mtimeNs);
             if (parsed.kind == FileNameKind::ContractState) e.state = std::make_pair(parsed.contractIndex, *parsed.ext);
+            if (ledgerFile) e.ledger = std::make_pair(parsed.kind, *parsed.ext);
         } else if (es.exists) {
             e.mtimeMs = toMs(es.mtimeNs);
         }

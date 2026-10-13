@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "format.h"
+#include "int128.h"
 #include "qstate/decode/decoder.h"
 
 namespace qstate::decode {
@@ -39,6 +40,7 @@ struct Ref {
     std::uint64_t index = 0;
     std::uint64_t base = 0;
     bool assetHint = false;
+    bool ledgerTypeHint = false; // the `type` byte of a universe record: rendered as an enum (issuance / ownership / possession)
     bool labelPending = false; // label must be derived from the bytes (entries, PoVs, set elements)
     std::string label;
     NodeId id;
@@ -87,6 +89,47 @@ struct HashInfo {
 
 struct IndexList { // generic cached vector of 32-bit ids
     std::vector<std::uint32_t> ids;
+};
+
+// One bulk pass over a ledger table (ledger.cpp): the live slots plus the aggregates of ledger.summary and the
+// cross-slot maps the universe table views need (asset name of an ownership / possession). Cached per generation.
+struct LedgerScan {
+    std::vector<std::uint32_t> live;        // live slots, ascending
+    bool truncated = false;                 // the file ends before the table does
+    // spectrum
+    wide::i128 totalSupply = 0;             // sum of incomingAmount - outgoingAmount
+    std::uint64_t nonZeroBalances = 0;      // balance > 0
+    std::uint32_t maxSlot = 0;
+    wide::i128 maxBalance = 0;
+    bool haveMax = false;
+    // universe
+    std::vector<std::uint32_t> byType[3];   // slots of type 1, 2, 3 (ascending)
+    std::uint64_t otherTypes = 0;           // live records with a type outside 1..3
+    struct Issuance {
+        std::uint32_t slot = 0;
+        std::uint8_t key[32] = {};
+        char name[8] = {};                  // NUL terminated
+        std::int8_t decimals = 0;
+        std::uint8_t uom[7] = {};
+        std::uint64_t ownerships = 0, possessions = 0;
+        wide::i128 totalShares = 0;
+    };
+    std::vector<Issuance> issuances;        // ascending slot
+    struct Ownership {
+        std::uint32_t slot = 0, issuanceIndex = 0;
+        std::int64_t shares = 0;
+    };
+    std::vector<Ownership> ownerships;      // ascending slot
+    struct Possession {
+        std::uint32_t slot = 0, ownershipIndex = 0;
+    };
+    std::vector<Possession> possessions;    // ascending slot
+
+    const Issuance* issuance(std::uint64_t slot) const;    // by slot, nullptr when the slot is not an issuance
+    const Ownership* ownership(std::uint64_t slot) const;
+    // Name of the asset a record of `type` with index `idx` (issuanceIndex / ownershipIndex) refers to; "" if unresolved.
+    std::string assetName(unsigned type, std::uint64_t idx) const;
+    std::size_t bytes() const;
 };
 
 struct ChildList {
@@ -205,6 +248,26 @@ public:
     // ---- tables (tables.cpp)
     TableInfo describeTable(const NodeId& id, const std::string& view, const Query& q) const;
     TablePage tableRows(const TableRequest& req, const Query& q) const;
+
+    // ---- ledgers (ledger.cpp)
+    bool rootIsLedger() const { return idx.x(rootType).cls == Cls::Ledger; }
+    const LedgerLayout& rootLedger() const { return idx.x(rootType).ledger; } // only when rootIsLedger()
+    // The cached bulk pass over the table `c` (a Ref of class Ledger).
+    std::shared_ptr<const LedgerScan> ledgerScan(const Ref& c, const Query& q) const;
+    static bool ledgerRecordLive(const LedgerLayout& l, const std::uint8_t* rec, std::size_t avail);
+    static unsigned assetType(const LedgerLayout& l, const std::uint8_t* rec, std::size_t avail); // 0 when unreadable
+    // Logical children of a universe record: the members of the alternative selected by `type` ("a:<name>" ids).
+    std::vector<Ref> assetLogicalChildren(const Ref& rec) const;
+    Ref assetAltMember(const Ref& rec, std::string_view name) const; // throws NotFoundError
+    // One-line previews with the asset name resolved through the other slots (small direct reads, no scan).
+    std::string entityPreview(const std::uint8_t* rec, std::size_t avail) const;
+    std::string assetPreview(const Ref& table, const std::uint8_t* rec, std::size_t avail) const;
+    // Asset name a record refers to, resolved by reading the referenced slots of `table` ("" when unresolved).
+    std::string assetNameByReads(const Ref& table, unsigned type, std::uint64_t index) const;
+    LedgerSummary ledgerSummary(const Query& q) const;
+    LedgerLookup ledgerLookup(std::string_view identity, const Query& q) const;
+    // Parses a 60-letter identity or a 64-hex key (InvalidArgumentError otherwise).
+    void parseKey(std::string_view text, std::uint8_t* key32) const;
 
     // ---- helpers
     std::string keySummary(TypeId keyType, std::uint64_t keyOffset, std::uint64_t keySize, bool assetHint) const;

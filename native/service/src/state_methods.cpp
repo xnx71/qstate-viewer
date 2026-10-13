@@ -7,9 +7,11 @@
 #include "qstate/support/identity.h"
 #include "qstate/support/k12_file.h"
 #include "qstate/service/schema_json.h"
+#include "state_target.h"
 #include "workspace_manager.h"
 
 #include <chrono>
+#include <utility>
 
 namespace qstate::service {
 
@@ -28,24 +30,9 @@ double msSince(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
-// Maps the exceptions of decode / support to rpc errors.
 template <class F>
 auto guarded(F&& f) -> decltype(f()) {
-    try {
-        return f();
-    } catch (const rpc::Error&) {
-        throw;
-    } catch (const rpc::Cancelled&) {
-        throw;
-    } catch (const decode::NotFoundError& e) {
-        throw rpc::Error(Code::NotFound, e.what());
-    } catch (const decode::InvalidArgumentError& e) {
-        throw rpc::Error(Code::InvalidParams, e.what());
-    } catch (const decode::CancelledError&) {
-        throw rpc::Error(Code::Internal, "cancelled");
-    } catch (const support::FileError& e) {
-        throw rpc::Error(Code::IoError, e.what());
-    }
+    return guardedDecode(std::forward<F>(f));
 }
 
 std::uint64_t u64Param(const json& params, const char* key, std::uint64_t fallback) {
@@ -66,11 +53,11 @@ struct Context {
     decode::Query query;
 };
 
+// `contract` is a StateTarget: a contract index or "spectrum" / "universe" (a ledger of the shown epoch).
 Context decoderContext(const WorkspaceManager& manager, const json& params, rpc::CallContext& call) {
     Context c;
     c.ws = manager.require();
-    const auto index = rpc::requireParam<std::uint32_t>(params, "contract");
-    c.view = c.ws->view(index);
+    c.view = c.ws->view(requireTarget(params));
     c.query.generation = c.view.generation;
     c.query.cancel = call.cancelFlag();
     return c;
@@ -122,13 +109,13 @@ void registerStateMethods(ModuleContext& ctx) {
 
     ctx.add("state.bytes", [manager](const json& params, rpc::CallContext&) -> json {
         auto ws = manager->require();
-        const auto index = rpc::requireParam<std::uint32_t>(params, "contract");
+        const StateTarget target = requireTarget(params);
         const auto offset = rpc::requireParam<std::uint64_t>(params, "offset");
         const auto length = rpc::requireParam<std::uint64_t>(params, "length");
         if (length > kMaxBytes) {
             throw rpc::Error(Code::InvalidParams, "params.length must be at most " + std::to_string(kMaxBytes));
         }
-        Workspace::View v = ws->fileView(index);
+        Workspace::View v = ws->fileView(target);
         return guarded([&]() -> json {
             std::vector<std::uint8_t> buf(static_cast<std::size_t>(length));
             const std::size_t got = v.reader->read(offset, buf.size(), buf.data());
@@ -172,8 +159,9 @@ void registerStateMethods(ModuleContext& ctx) {
 
     ctx.add("state.digest", [manager](const json& params, rpc::CallContext& call) -> json {
         auto ws = manager->require();
+        // contracts only: the node digests the ledgers as Merkle trees over the records, not as one flat hash
         const auto index = rpc::requireParam<std::uint32_t>(params, "contract");
-        Workspace::View v = ws->fileView(index);
+        Workspace::View v = ws->fileView(StateTarget::ofContract(index));
         const auto t0 = std::chrono::steady_clock::now();
         return guarded([&]() -> json {
             support::K12FileOptions options;

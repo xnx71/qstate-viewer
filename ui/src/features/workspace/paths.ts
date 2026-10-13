@@ -10,6 +10,22 @@ export function parseStateFileName(name: string): { index: number; epoch: number
   return m ? { index: Number(m[1]), epoch: Number(m[2]) } : null;
 }
 
+/** spectrum.EEE / universe.EEE: a ledger file. */
+export const LEDGER_FILE_RE = /^(spectrum|universe)\.(\d+)$/;
+
+export function parseLedgerFileName(name: string): { kind: "spectrum" | "universe"; epoch: number } | null {
+  const m = LEDGER_FILE_RE.exec(name);
+  return m ? { kind: m[1] as "spectrum" | "universe", epoch: Number(m[2]) } : null;
+}
+
+/** Any file that can be opened on its own: a contract state file or a ledger file. */
+export function parseOpenableFileName(name: string): { kind: "contract"; index: number; epoch: number } | { kind: "ledger"; ledger: "spectrum" | "universe"; epoch: number } | null {
+  const c = parseStateFileName(name);
+  if (c) return { kind: "contract", ...c };
+  const l = parseLedgerFileName(name);
+  return l ? { kind: "ledger", ledger: l.kind, epoch: l.epoch } : null;
+}
+
 interface Segment {
   label: string;
   path: string;
@@ -44,7 +60,7 @@ export function baseName(path: string): string {
 export function parseTypedPath(text: string, sep: Sep): { dir: string; file?: string } {
   let p = text.trim().replace(/^(["'])(.*)\1$/, "$2").replace(/^file:\/\//, "");
   if (p.length > 1) p = p.replace(/[\\/]+$/, "");
-  if (parseStateFileName(baseName(p))) {
+  if (parseOpenableFileName(baseName(p))) {
     const dir = parentPath(p, sep);
     if (dir !== null) return { dir, file: p };
   }

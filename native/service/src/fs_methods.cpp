@@ -15,6 +15,10 @@ json entryJson(const support::FsEntry& e) {
     if (e.size) j["size"] = *e.size;
     if (e.mtimeMs) j["mtimeMs"] = *e.mtimeMs;
     if (e.state) j["state"] = {{"index", e.state->first}, {"epoch", e.state->second}};
+    if (e.ledger) {
+        j["ledger"] = {{"kind", e.ledger->first == support::FileNameKind::Spectrum ? "spectrum" : "universe"},
+                       {"epoch", e.ledger->second}};
+    }
     return j;
 }
 

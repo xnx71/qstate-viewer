@@ -9,7 +9,10 @@ import { ContainerBar } from "@/features/tree/ContainerBar";
 import { kindLabel, NodeIcon } from "@/features/tree/NodeIcon";
 import { Value } from "@/features/values/Value";
 import { fmtBytes, fmtCount, fmtOffset, leafText } from "@/lib/format";
-import type { NodeInfo } from "@/rpc/contract";
+import type { NodeInfo, StateTarget } from "@/rpc/contract";
+import { lookupItems } from "@/features/contextmenu/builders/node";
+import { realDeps } from "@/features/contextmenu/deps";
+import { ScanSearchIcon } from "lucide-react";
 import { store } from "@/store/store";
 import { openTable } from "@/store/table";
 import { selectedByteAtom } from "@/store/hex";
@@ -18,7 +21,7 @@ import { findPathById, nodeAtPath } from "@/features/tree/treeOps";
 import { useAtomValue } from "jotai";
 import { KV, Section } from "./Field";
 
-export function OverviewTab({ contract, node, selectionPath }: { contract: number; node: NodeInfo; selectionPath: PathItem[] }) {
+export function OverviewTab({ contract, node, selectionPath }: { contract: StateTarget; node: NodeInfo; selectionPath: PathItem[] }) {
   const tree = useAtomValue(treeAtomFamily(contract));
   const path = findPathById(tree.root, node.id);
   const tnode = path ? nodeAtPath(tree.root, path) : null;
@@ -39,6 +42,7 @@ export function OverviewTab({ contract, node, selectionPath }: { contract: numbe
           </Badge>
           {!node.inFile && <Badge variant="destructive">beyond EOF</Badge>}
           {node.zero && <Badge variant="outline">all zero</Badge>}
+          {node.kind === "union" && node.preview && /^(issuance|ownership|possession)/.test(node.preview) && <Badge variant="outline" className="text-t-asset">{node.preview.split(" ")[0]} alternative</Badge>}
         </div>
         <dl>
           <KV k="Type">
@@ -77,6 +81,13 @@ export function OverviewTab({ contract, node, selectionPath }: { contract: numbe
             >
               Copy value
             </Button>
+            {lookupItems(v, realDeps).map((e) =>
+              e.kind === "item" ? (
+                <Button key={e.id} variant="outline" size="sm" disabled={!!e.disabled} title={typeof e.disabled === "string" ? e.disabled : undefined} onClick={() => void e.run()}>
+                  <ScanSearchIcon /> {e.label}
+                </Button>
+              ) : null,
+            )}
           </div>
           {v?.k === "id" && (
             <dl className="mt-2">

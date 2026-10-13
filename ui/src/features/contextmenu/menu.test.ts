@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CellValue, ContractInfo, NodeInfo, TableColumn } from "@/rpc/contract";
+import type { CellValue, ContractInfo, LedgerInfo, NodeInfo, TableColumn, TableRow } from "@/rpc/contract";
+import { ledgerMenu, ledgerRowItems, ledgerRowTarget } from "./builders/ledger";
 import { store } from "@/store/store";
 import type { MenuDeps } from "./deps";
 import { appMenu } from "./builders/app";
@@ -19,7 +20,15 @@ function fakeDeps(over: Partial<MenuDeps> = {}): MenuDeps {
     copy: vi.fn(async () => true),
     find: vi.fn(async () => undefined),
     contracts: () => contracts,
+    ledgers: () => [{ kind: "spectrum", status: "ok" }, { kind: "universe", status: "missing-file" }] as unknown as LedgerInfo[],
     gotoContract: vi.fn(),
+    lookupInLedger: vi.fn(async () => undefined),
+    openLedger: vi.fn(),
+    showLedgerTree: vi.fn(),
+    showLedgerSummary: vi.fn(),
+    promptLookup: vi.fn(),
+    findReferences: vi.fn(),
+    showRecordBytes: vi.fn(async () => undefined),
     showBytesTab: vi.fn(),
     showOverviewTab: vi.fn(),
     hexJump: vi.fn(),
@@ -121,7 +130,7 @@ describe("node menu", () => {
   it("identity: copy identity / hex key, find as identity, contract navigation, in a stable order", async () => {
     const deps = fakeDeps();
     const m = nodeMenu(target({ value: CONTRACT_ID, info: info({ value: CONTRACT_ID }) }), deps);
-    expect(ids(m).slice(0, 5)).toEqual(["copy-identity", "copy-hex-key", "find-value", "goto-contract", "copy"]);
+    expect(ids(m).slice(0, 7)).toEqual(["copy-identity", "copy-hex-key", "find-value", "lookup-spectrum", "lookup-universe", "goto-contract", "copy"]);
     expect((find(m, "goto-contract") as MenuAction).label).toBe("Go to contract QUTIL");
     await run(m, "copy-identity");
     await run(m, "copy-hex-key");
@@ -137,6 +146,17 @@ describe("node menu", () => {
     expect(find(nodeMenu(target({ value: ID }), fakeDeps()), "goto-contract")).toBeUndefined();
     const unknown: CellValue = { ...CONTRACT_ID, contract: { index: 99, name: "NOPE" } } as CellValue;
     expect(find(nodeMenu(target({ value: unknown }), fakeDeps()), "goto-contract")).toBeUndefined();
+  });
+
+  it("identities can be looked up in the ledgers (disabled for a missing ledger file), from any contract state", async () => {
+    const deps = fakeDeps();
+    const m = nodeMenu(target({ value: ID }), deps);
+    expect((find(m, "lookup-spectrum") as MenuAction).label).toBe("Look up in spectrum");
+    expect((find(m, "lookup-universe") as MenuAction).disabled).toBe("no ledger file");
+    await run(m, "lookup-spectrum");
+    expect(deps.lookupInLedger).toHaveBeenCalledWith("spectrum", "A".repeat(56) + "WXYZ");
+    expect(find(nodeMenu(target({ value: INT }), deps), "lookup-spectrum")).toBeUndefined();
+    expect(find(nodeMenu(target({ value: ID }), fakeDeps({ ledgers: () => [] })), "lookup-spectrum")).toBeUndefined();
   });
 
   it("a zero identity cannot be copied as identity or searched", () => {
@@ -339,6 +359,66 @@ describe("table menus", () => {
     expect(find(pinned, "pin-left")).toBeUndefined();
     expect((find(pinned, "sort-asc") as MenuAction).disabled).toBe("not sortable");
     expect((find(pinned, "filter-column") as MenuAction).disabled).toBe("column cannot be filtered");
+  });
+});
+
+describe("ledger menus", () => {
+  const spectrum = { kind: "spectrum", status: "ok", generation: 1, recordTypeName: "EntityRecord", file: { path: "/s/spectrum.229", name: "spectrum.229", size: 1, mtimeMs: 0 } } as LedgerInfo;
+
+  it("sidebar entry: open table / tree / summary / lookup, copy, file actions; disabled without a file", async () => {
+    const deps = fakeDeps();
+    const m = ledgerMenu(spectrum, deps);
+    expect(ids(m)).toEqual(["open-table", "open-tree", "summary", "lookup", "copy-name", "copy-path", "reveal-file", "reload"]);
+    for (const id of ids(m)) await run(m, id);
+    expect(deps.openLedger).toHaveBeenCalledWith("spectrum");
+    expect(deps.showLedgerTree).toHaveBeenCalledWith("spectrum");
+    expect(deps.showLedgerSummary).toHaveBeenCalledWith("spectrum");
+    expect(deps.promptLookup).toHaveBeenCalledWith("spectrum");
+    expect(deps.copy).toHaveBeenCalledWith("Spectrum", "Name");
+    expect(deps.copy).toHaveBeenCalledWith("/s/spectrum.229", "Path");
+    expect(deps.revealFile).toHaveBeenCalledWith("/s/spectrum.229");
+    const missing = ledgerMenu({ kind: "universe", status: "missing-file", generation: 0, recordTypeName: "AssetRecord" }, deps);
+    expect((find(missing, "open-table") as MenuAction).disabled).toBe("no ledger file");
+    expect((find(missing, "copy-path") as MenuAction).disabled).toBe("no ledger file");
+    expect(topLevelCount(m)).toBeLessThanOrEqual(MAX_TOP_LEVEL_ITEMS);
+  });
+
+  const COLS: TableColumn[] = [
+    { id: "$slot", label: "slot", typeName: "uint32", kind: "int", group: "meta", sortable: true, filterable: true },
+    { id: "$type", label: "type", typeName: "AssetType", kind: "enum", group: "meta", sortable: true, filterable: true },
+    { id: "publicKey", label: "publicKey", typeName: "QPI::id", kind: "id", group: "key", sortable: true, filterable: true },
+    { id: "numberOfShares", label: "numberOfShares", typeName: "sint64", kind: "int", group: "value", sortable: true, filterable: true },
+  ];
+  const row = (type: number): TableRow => ({ index: 42, id: "i:42", cells: [INT, { k: "enum", v: String(type), name: "X" }, ID, { k: "int", v: "1610000000", unsigned: false, bits: 64, hex: "0x0" }] });
+
+  it("universe rows: copy identity / shares, show record, bytes, references by type", async () => {
+    const deps = fakeDeps();
+    const t = ledgerRowTarget("universe", row(1), COLS);
+    expect(t).toMatchObject({ kind: "universe", slot: 42, id: "i:42", identity: "A".repeat(56) + "WXYZ", amount: { label: "shares", value: "1610000000" }, type: 1 });
+    const m = ledgerRowItems(t, deps);
+    expect(ids(m)).toEqual(["copy-row-identity", "copy-amount", "show-record", "record-bytes", "find-references"]);
+    expect((find(m, "find-references") as MenuAction).label).toMatch(/ownerships of this issuance/);
+    for (const id of ids(m)) await run(m, id);
+    expect(deps.copy).toHaveBeenCalledWith("A".repeat(56) + "WXYZ", "Identity");
+    expect(deps.copy).toHaveBeenCalledWith("1,610,000,000", "Shares");
+    expect(deps.revealInTree).toHaveBeenCalledWith("universe", "i:42");
+    expect(deps.showRecordBytes).toHaveBeenCalledWith("universe", "i:42");
+    expect(deps.findReferences).toHaveBeenCalledWith(42, 1);
+    expect((find(ledgerRowItems(ledgerRowTarget("universe", row(2), COLS), deps), "find-references") as MenuAction).label).toMatch(/possessions of this ownership/);
+    expect((find(ledgerRowItems(ledgerRowTarget("universe", row(3), COLS), deps), "find-references") as MenuAction).disabled).toMatch(/referenced by nothing/);
+  });
+
+  it("spectrum rows: copy balance, no references; a ledger table cell menu carries the record submenu", () => {
+    const cols: TableColumn[] = [COLS[0], COLS[2], { ...COLS[3], id: "balance" }];
+    const t = ledgerRowTarget("spectrum", { index: 1, id: "i:1", cells: [INT, ID, INT] }, cols);
+    expect(t.amount).toEqual({ label: "balance", value: "1234567" });
+    const m = ledgerRowItems(t, fakeDeps());
+    expect(ids(m)).toEqual(["copy-row-identity", "copy-amount", "show-record", "record-bytes"]);
+    const cell = tableCellMenu(cellTarget({ contract: "spectrum", ledger: t }), fakeDeps());
+    expect(find(cell, "record")).toBeDefined();
+    expect(find(cell, "copy-amount")).toBeDefined();
+    expect(topLevelCount(cell)).toBeLessThanOrEqual(MAX_TOP_LEVEL_ITEMS);
+    expect(find(tableCellMenu(cellTarget(), fakeDeps()), "record")).toBeUndefined();
   });
 });
 

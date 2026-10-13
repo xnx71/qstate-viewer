@@ -121,6 +121,26 @@ SearchResult StateDecoder::Impl::search(const SearchRequest& req, const Query& q
     res.note = pat.note;
     const std::uint64_t limit = std::max<std::uint64_t>(1, std::min<std::uint64_t>(req.limit ? req.limit : 200, 5000));
 
+    if (pat.mode == "id" && rootIsLedger()) {
+        // Ledger tables are hashed by publicKey: probe the home slot instead of scanning the file.
+        const LedgerLookup lookup = ledgerLookup(fmt::hexBytes(pat.bytes.data(), 32), q);
+        const LedgerLayout& l = rootLedger();
+        res.note = pat.note + " (hash lookup, " + std::to_string(lookup.probes) + (lookup.probes == 1 ? " probe)" : " probes)");
+        for (const LedgerLookupHit& h : lookup.hits) {
+            if (res.matches.size() >= limit) {
+                res.truncated = true;
+                break;
+            }
+            SearchMatch m;
+            m.offset = h.slot * l.recordSize + l.keyOff;
+            m.length = 32;
+            m.location = locate(m.offset, q);
+            res.matches.push_back(std::move(m));
+        }
+        res.elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        return res;
+    }
+
     const std::uint64_t fileSize = src->size();
     const std::size_t plen = pat.bytes.size();
     constexpr std::size_t kBlock = 4u << 20;

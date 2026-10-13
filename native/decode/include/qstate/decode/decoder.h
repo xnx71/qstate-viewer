@@ -17,8 +17,10 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include "qstate/decode/byte_source.h"
 #include "qstate/decode/cache.h"
@@ -84,6 +86,16 @@ public:
 
     TableInfo describeTable(const NodeId& id, const std::string& view = {}, const Query& q = {}) const;
     TablePage tableRows(const TableRequest& req, const Query& q = {}) const;
+
+    // Ledgers (root type with role SpectrumTable / UniverseTable). Both throw InvalidArgumentError on other roots.
+    // Aggregates over the live records: one bulk pass over the file, cached per generation (the same scan serves the
+    // logical child list and the tables).
+    LedgerSummary ledgerSummary(const Query& q = {}) const;
+    // Hash lookup of an identity (60 letters, checksum verified) or a 64-hex key: probes from the home slot until an
+    // empty one; every record with that key is a hit (spectrum: at most one). O(probes), no scan.
+    LedgerLookup ledgerLookup(std::string_view identity, const Query& q = {}) const;
+    // Kind of the ledger this decoder decodes, nullopt for a contract state.
+    std::optional<schema::LedgerKind> ledgerKind() const;
 
     std::uint64_t stateSize() const; // sizeof(state type) from the schema
     std::uint64_t fileSize() const;  // ByteSource::size()

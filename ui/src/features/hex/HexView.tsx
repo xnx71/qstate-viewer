@@ -19,6 +19,8 @@ import { bytesBase, fetchBytesBlock, readRange, useBytesBlock as query } from ".
 import { usePageLoader, type LoaderPage } from "@/lib/usePageLoader";
 import { hexJumpAtom, selectedByteAtom } from "@/store/hex";
 import { gotoOffset } from "@/store/search";
+import type { StateTarget } from "@/rpc/contract";
+import { targetKey } from "@/lib/target";
 
 const COLS = 16;
 const BLOCK_ROWS = BYTES_BLOCK / COLS;
@@ -66,7 +68,7 @@ function blockBytes(b: BytesBlock): Uint8Array {
 }
 
 interface RowProps {
-  contract: number;
+  contract: StateTarget;
   row: number;
   range: { start: number; end: number } | null;
   onHover: (offset: number | null) => void;
@@ -120,10 +122,10 @@ const HexRow = memo(function HexRow({ contract, row, range, onHover }: RowProps)
 });
 
 /** Interpretation of the bytes at `offset` (little endian), shown while hovering. */
-function interpret(contract: number, version: string, offset: number): string {
+function interpret(contract: StateTarget, version: string, offset: number): string {
   const get = (o: number): number | undefined => {
     const block = Math.floor(o / BYTES_BLOCK);
-    const b = bytesQ.peek(`b|${contract}|${block}`, version);
+    const b = bytesQ.peek(`b|${targetKey(contract)}|${block}`, version);
     if (!b) return undefined;
     const u = blockBytes(b);
     const i = o - block * BYTES_BLOCK;
@@ -153,7 +155,7 @@ function interpret(contract: number, version: string, offset: number): string {
 }
 
 interface Props {
-  contract: number;
+  contract: StateTarget;
   /** Highlighted byte range (node extent or search match). */
   range: { offset: number; length: number } | null;
   className?: string;
@@ -196,14 +198,14 @@ export function HexView({ contract, range, className }: Props) {
         run: () => fetchBytesBlock(contract, block, version),
       };
     },
-    epoch: `${contract}@${version}`,
+    epoch: `${targetKey(contract)}@${version}`,
   });
 
   // Scroll to the highlighted range when it changes.
   const lastKey = useRef("");
   useEffect(() => {
     if (!span || !rows) return;
-    const key = `${contract}:${span.start}`;
+    const key = `${targetKey(contract)}:${span.start}`;
     if (key === lastKey.current) return;
     lastKey.current = key;
     requestAnimationFrame(() => sv.scrollToRow(Math.floor(span.start / COLS), "center"));

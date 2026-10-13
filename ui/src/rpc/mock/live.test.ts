@@ -74,10 +74,14 @@ describe('live events', () => {
     expect(events.length).toBe(5);
     for (const e of events) {
       expect(e.workspaceId).toBe(ws.id);
-      expect(e.contracts.length).toBeGreaterThanOrEqual(1);
-      expect(e.contracts.length).toBeLessThanOrEqual(2);
+      // a tick changes 1-2 files: contracts, or (sometimes) one of the ledgers
+      const n = e.contracts.length + (e.ledgers?.length ?? 0);
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(n).toBeLessThanOrEqual(2);
       for (const c of e.contracts) expect(c.status).toBe('ok');
+      for (const l of e.ledgers ?? []) expect(l.status).toBe('ok');
     }
+    expect(events.some((e) => (e.ledgers?.length ?? 0) > 0) || events.every((e) => e.contracts.length > 0)).toBe(true);
     b.setLive(false);
     expect(b.isLive()).toBe(false);
     vi.advanceTimersByTime(5000);

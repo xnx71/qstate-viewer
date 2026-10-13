@@ -61,6 +61,22 @@ tables, hex, Find results). `src/rpc/transports/webview.ts` also works around a 
 RPC answer alive. Measurements, budgets and the harness: [docs/MEMORY.md](../docs/MEMORY.md). `window.__qstate_debug.stats()` in
 the page shows the cache sizes.
 
+## Ledgers (spectrum.EEE / universe.EEE)
+
+The two ledger files of an epoch are addressed like contracts (`contract: "spectrum" | "universe"`, `StateTarget` in
+`src/rpc/contract.ts`); `src/lib/target.ts` is the one place that turns a target into keys / labels, so every cache, atom
+and tab works for both. `src/store/ledger.ts` holds the ledger specific actions (open as table with its default sort / view,
+identity lookup, asset filters, references), `src/features/ledger/` the views: the sidebar section, the summary card
+(`ledger.summary`, with the sortable assets sub-table of the universe), the lookup box (`ledger.lookup`), and the cell
+renderings of the ledger tables (balance bars, type chips, asset badges, slot links). A ledger opens on its table (the
+root `""` of its tree); the tree (logical = live records, raw = all 2^24 slots) stays reachable from the tab strip. The
+global Find prefers `ledger.lookup` for identities when a ledger is the current target and says which path answered.
+The mock implements both ledgers without materialising the 2^24 slots (`src/rpc/mock/ledgers.ts`: ~5,000 entities with the
+contract ids at slots 1..30, 60 issuances with ownerships / possessions, hash semantics kept, status variety across epochs).
+The UI assumes the table column ids `$slot`, `identity` / `publicKey`, `balance`, `$type`, `asset`, `name`,
+`managingContractIndex`, `issuanceIndex`, `ownershipIndex`, `numberOfShares` and the universe views
+`all / issuances / ownerships / possessions` (see the report of the ledger work for what the native side must match).
+
 ## Context menus
 
 One global menu (`src/features/contextmenu`): features register menus declaratively with `useContextMenu(build)`

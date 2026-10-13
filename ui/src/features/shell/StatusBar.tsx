@@ -2,7 +2,8 @@ import { useAtomValue } from "jotai";
 import { fmtAgo, fmtBytes, fmtCount, fmtHexOffset } from "@/lib/format";
 import { useNode } from "@/store/data";
 import { treeAtomFamily } from "@/store/tree";
-import { appInfoAtom, pendingChangesAtom, selectedContractInfoAtom, workspaceAtom } from "@/store/workspace";
+import { appInfoAtom, ledgersAtom, pendingChangesAtom, selectedTargetAtom, selectedTargetInfoAtom, workspaceAtom } from "@/store/workspace";
+import type { StateTarget } from "@/rpc/contract";
 import { useEffect, useState } from "react";
 
 function useNow(interval = 5000): number {
@@ -14,7 +15,7 @@ function useNow(interval = 5000): number {
   return now;
 }
 
-function Selected({ contract }: { contract: number }) {
+function Selected({ contract }: { contract: StateTarget }) {
   const sel = useAtomValue(treeAtomFamily(contract)).selected;
   const node = useNode(contract, sel?.id ?? null);
   if (!sel || !node.data) return <span>no selection</span>;
@@ -29,19 +30,26 @@ function Selected({ contract }: { contract: number }) {
 export function StatusBar() {
   const ws = useAtomValue(workspaceAtom);
   const info = useAtomValue(appInfoAtom);
-  const c = useAtomValue(selectedContractInfoAtom);
+  const target = useAtomValue(selectedTargetAtom);
+  const c = useAtomValue(selectedTargetInfoAtom);
+  const ledgers = useAtomValue(ledgersAtom).filter((l) => l.file).length;
   const pending = useAtomValue(pendingChangesAtom);
   const now = useNow();
   return (
     <footer className="flex h-8 shrink-0 items-center gap-4 border-t bg-canvas px-3 font-mono text-meta text-fg-muted" role="contentinfo">
-      <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap">{c ? <Selected contract={c.index} /> : <span>{ws ? "select a contract" : "no workspace"}</span>}</div>
+      <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap">{target !== null && c ? <Selected contract={target} /> : <span>{ws ? "select a contract or a ledger" : "no workspace"}</span>}</div>
       {c?.file && (
         <span className="shrink-0" title={c.file.path}>
           {c.file.name} · {fmtBytes(c.file.size)} · gen {c.generation}
         </span>
       )}
       {pending.lastAt > 0 && <span className="shrink-0 text-warn">last change {fmtAgo(pending.lastAt, now)}</span>}
-      {ws && <span className="shrink-0">{ws.contracts.length === 1 ? "1 contract" : `${ws.contracts.length} contracts`}</span>}
+      {ws && (
+        <span className="shrink-0" data-testid="status-counts">
+          {ws.contracts.length === 1 ? "1 contract" : `${ws.contracts.length} contracts`}
+          {ledgers ? ` · ${ledgers} ${ledgers === 1 ? "ledger" : "ledgers"}` : ""}
+        </span>
+      )}
       <span className="chip shrink-0 rounded-md px-1.5 text-meta text-fg-muted" title="RPC transport">
         {info?.transport ?? "…"}
       </span>

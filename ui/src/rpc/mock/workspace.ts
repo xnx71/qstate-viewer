@@ -1,11 +1,13 @@
 // workspace.open: validation, core ref resolution, per-contract status, diagnostics.
 
-import type { ContractInfo, ContractStatus, CoreInfo, CoreVersion, Diagnostic, OtherFile, StateDirInfo, Workspace, WorkspaceRequest } from '../contract';
+import type { ContractInfo, ContractStatus, CoreInfo, CoreVersion, Diagnostic, LedgerInfo, OtherFile, StateDirInfo, Workspace, WorkspaceRequest } from '../contract';
 import type { World } from './contracts';
 import type { MockFs } from './fsTree';
 import { normalizePath, parentOf } from './fsTree';
 import type { FakeRepo } from './coreRepo';
-import { STATE_FILE_RE, stateFileMtime, stateFileName, stateFileSize } from './statePlan';
+import { LEDGER_CAPACITY, LEDGER_FILE_RE, STATE_FILE_RE, ledgerExpectedSize, ledgerFileName, ledgerFileSize, ledgerRecordSize, stateFileMtime, stateFileName, stateFileSize } from './statePlan';
+import type { LedgerKind } from './statePlan';
+import { ledgerRecordTypeName } from './ledgers';
 import { fmtInt, isPlainObject, rpcError } from './util';
 import { mix, strHash } from './prng';
 
@@ -49,6 +51,7 @@ export function openWorkspace(
   rawReq: unknown,
   id: number,
   generations: ReadonlyMap<number, number>,
+  ledgerGenerations: ReadonlyMap<LedgerKind, number> = new Map(),
 ): OpenResult {
   const req = validateRequest(rawReq);
   const statePath = normalizePath(req.statePath);
@@ -59,15 +62,18 @@ export function openWorkspace(
   let stateDir = statePath;
   let scope: StateDirInfo['scope'] = 'dir';
   let only: number | undefined;
+  let onlyLedger: LedgerKind | undefined;
   let epochsAvailable: number[];
   let epoch: number;
   if (node.kind === 'file') {
     const m = STATE_FILE_RE.exec(node.name);
-    if (!m) throw rpcError('io_error', `'${node.name}' is not a contract state file (expected contractNNNN.EEE)`, { path: statePath });
+    const l = LEDGER_FILE_RE.exec(node.name);
+    if (!m && !l) throw rpcError('io_error', `'${node.name}' is not a state file (expected contractNNNN.EEE, spectrum.EEE or universe.EEE)`, { path: statePath });
     stateDir = parentOf(statePath) ?? '/';
     scope = 'file';
-    only = Number(m[1]);
-    epoch = Number(m[2]);
+    if (m) only = Number(m[1]);
+    else onlyLedger = (l as RegExpExecArray)[1] as LedgerKind;
+    epoch = Number((m ?? (l as RegExpExecArray))[2]);
     epochsAvailable = [epoch];
   } else {
     epochsAvailable = fs.hints(stateDir).stateEpochs;
@@ -123,10 +129,10 @@ export function openWorkspace(
   // ---- contracts
   const contracts: ContractInfo[] = [];
   const indices = new Set<number>();
-  for (const d of world.contracts) if (only === undefined || d.index === only) indices.add(d.index);
+  if (onlyLedger === undefined) for (const d of world.contracts) if (only === undefined || d.index === only) indices.add(d.index);
   for (const n of fs.names(stateDir)) {
     const m = STATE_FILE_RE.exec(n.name);
-    if (m && Number(m[2]) === epoch && (only === undefined || Number(m[1]) === only)) indices.add(Number(m[1]));
+    if (m && onlyLedger === undefined && Number(m[2]) === epoch && (only === undefined || Number(m[1]) === only)) indices.add(Number(m[1]));
   }
   if (only !== undefined) indices.delete(-1);
   for (const index of [...indices].sort((a, b) => a - b)) {
@@ -237,8 +243,41 @@ export function openWorkspace(
     return o;
   });
 
+  // ---- ledgers: both kinds for a directory, only the opened one for a single ledger file, none for a single contract file
+  const ledgers: LedgerInfo[] = [];
+  const ledgerKinds: LedgerKind[] = scope === 'dir' ? ['spectrum', 'universe'] : onlyLedger ? [onlyLedger] : [];
+  for (const kind of ledgerKinds) {
+    const size = ledgerFileSize(epoch, kind);
+    const fname = ledgerFileName(epoch, kind);
+    const recordSize = ledgerRecordSize(kind);
+    const typeNode = world.types.find(ledgerRecordTypeName(kind));
+    const info: LedgerInfo = {
+      kind,
+      recordTypeName: ledgerRecordTypeName(kind),
+      recordSize,
+      capacity: LEDGER_CAPACITY,
+      expectedSize: ledgerExpectedSize(kind),
+      status: 'ok',
+      generation: ledgerGenerations.get(kind) ?? 1,
+    };
+    if (typeNode) info.recordTypeId = typeNode.id;
+    if (size === null) {
+      info.status = 'missing-file';
+      info.statusMessage = `No ${fname} in ${stateDir}`;
+      diagnosticsOut.push({ severity: 'note', message: `No ${kind} file for epoch ${epoch} (${fname})` });
+    } else {
+      info.file = { name: fname, path: `${stateDir}/${fname}`, size, mtimeMs: stateFileMtime(seed, epoch, kind === 'spectrum' ? 90 : 91) };
+      if (size !== info.expectedSize) {
+        info.status = 'size-mismatch';
+        info.statusMessage = `${fname} is ${fmtInt(Math.abs((info.expectedSize as number) - size))} bytes ${size < (info.expectedSize as number) ? 'smaller' : 'larger'} than ${kind === 'spectrum' ? 'SPECTRUM' : 'ASSETS'}_CAPACITY × sizeof(${info.recordTypeName}) = ${fmtInt(info.expectedSize as number)}`;
+        diagnosticsOut.push({ severity: 'warning', message: info.statusMessage, file: kind === 'spectrum' ? 'src/spectrum/spectrum.h' : 'src/assets/assets.h' });
+      }
+    }
+    ledgers.push(info);
+  }
+
   const request: WorkspaceRequest = { core: req.core, statePath: req.statePath };
   if (req.epoch !== undefined) request.epoch = req.epoch;
   if (req.defines !== undefined) request.defines = req.defines;
-  return { workspace: { id, request, core, state, contracts, diagnostics: diagnosticsOut }, epoch, schemaEpoch };
+  return { workspace: { id, request, core, state, contracts, ledgers, diagnostics: diagnosticsOut }, epoch, schemaEpoch };
 }

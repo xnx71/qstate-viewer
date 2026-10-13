@@ -5,6 +5,7 @@ import { bridgeFixApplied, bridgeReceivedChars, pendingBridgeCalls } from "@/rpc
 import { cacheEpochAtom } from "./cacheEpoch";
 import { queryFamilies, trimAllQueries } from "./query";
 import { tableUiAtomFamily, openTablesAtom } from "./table";
+import { ledgerUiAtomFamily } from "./ledger";
 import { treeAtomFamily } from "./tree";
 import { store } from "./store";
 
@@ -56,7 +57,7 @@ export interface DebugStats {
   summary: string;
   caches: Record<string, CacheStat>;
   cacheBytes: number;
-  atoms: { tree: number; tableUi: number; openTables: number };
+  atoms: { tree: number; tableUi: number; openTables: number; ledgerUi: number };
   bridge: { fixApplied: boolean; pending: number; receivedMB: number };
 }
 
@@ -77,7 +78,7 @@ export function debugStats(): DebugStats {
     summary,
     caches,
     cacheBytes,
-    atoms: { tree: count(treeAtomFamily.getParams()), tableUi: count(tableUiAtomFamily.getParams()), openTables: store.get(openTablesAtom).length },
+    atoms: { tree: count(treeAtomFamily.getParams()), tableUi: count(tableUiAtomFamily.getParams()), openTables: store.get(openTablesAtom).length, ledgerUi: count(ledgerUiAtomFamily.getParams()) },
     bridge: { fixApplied: bridgeFixApplied(), pending: pendingBridgeCalls(), receivedMB: bridgeReceivedChars() / 1048576 },
   };
 }

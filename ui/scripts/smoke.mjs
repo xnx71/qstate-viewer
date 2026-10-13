@@ -1,5 +1,6 @@
 // E2E smoke test: drives the BUILT page (dist-mock/index.html via file://, or --url=...) with the mock backend:
-// open workspace (sync, pick a tag, browse to a folder) -> expand a node -> open table -> sort -> filter -> search, asserting no console errors.
+// open workspace (sync, pick a tag, browse to a folder) -> expand a node -> open table -> sort -> filter -> search -> ledgers
+// (spectrum table + summary, sort, lookup, universe, asset -> filtered ownerships, Find via ledger.lookup), asserting no console errors.
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -200,6 +201,85 @@ try {
   if (textItems.join("|") !== "Cut|Copy|Paste|Select all" && !/^Cut/.test(textItems[0] ?? "")) throw new Error(`text menu: ${textItems.join(" | ")}`);
   await page.keyboard.press("Escape");
   step("text inputs get the editing menu");
+
+  // 12. ledgers: spectrum opens on its table, sorted by balance, with the summary
+  const num = (s) => Number(String(s).replace(/[^0-9-]/g, ""));
+  await page.evaluate(() => document.querySelector("[role=option][data-target='spectrum']")?.click());
+  await page.waitForSelector("[data-testid=ledger-view-spectrum] [role=grid] [role=row][aria-rowindex] [role=gridcell]", { timeout: 20000 });
+  await waitFor(page, () => /5,000/.test(document.querySelector("[data-testid=ledger-population]")?.textContent ?? ""), null, 15000, "spectrum population");
+  await waitFor(page, () => !document.querySelector("[role=grid] [data-placeholder]"), null, 15000, "spectrum rows");
+  const sortedDesc = await page.$eval("[role=columnheader][data-col=balance]", (h) => h.getAttribute("aria-sort"));
+  if (sortedDesc !== "descending") throw new Error(`spectrum should open sorted by balance desc, got ${sortedDesc}`);
+  const balances = await page.$$eval("[role=grid] [role=row][aria-rowindex] [role=gridcell][data-col=balance]", (cells) => cells.slice(0, 3).map((c) => c.innerText));
+  if (!(num(balances[0]) >= num(balances[1]) && num(balances[1]) >= num(balances[2]))) throw new Error(`not sorted by balance desc: ${balances.join(" | ")}`);
+  const sidebarPop = await page.$eval("[data-testid=ledger-pop-spectrum]", (e) => e.textContent);
+  step(`spectrum: table + summary (population 5,000; sidebar says ${sidebarPop.trim()}), sorted by balance desc`);
+  // a header click cycles asc -> desc -> none: click until ascending
+  for (let i = 0; i < 3 && (await page.$eval("[role=columnheader][data-col=balance]", (h) => h.getAttribute("aria-sort"))) !== "ascending"; i++) {
+    await page.evaluate(() => document.querySelector("[role=columnheader][data-col=balance]").click());
+    await sleep(250);
+  }
+  await waitFor(page, () => document.querySelector("[role=columnheader][data-col=balance]")?.getAttribute("aria-sort") === "ascending", null, 10000, "balance ascending");
+  await sleep(500);
+  await waitFor(page, () => !document.querySelector("[role=grid] [data-placeholder]"), null, 15000, "re-sorted rows");
+  const smallest = await page.$eval("[role=grid] [role=row][aria-rowindex] [role=gridcell][data-col=balance]", (c) => c.innerText);
+  if (num(smallest) !== 0) throw new Error(`smallest balance should be 0, got ${smallest}`);
+  for (let i = 0; i < 3 && (await page.$eval("[role=columnheader][data-col=balance]", (h) => h.getAttribute("aria-sort"))) !== "descending"; i++) {
+    await page.evaluate(() => document.querySelector("[role=columnheader][data-col=balance]").click());
+    await sleep(250);
+  }
+  await waitFor(page, () => document.querySelector("[role=columnheader][data-col=balance]")?.getAttribute("aria-sort") === "descending", null, 10000, "balance descending again");
+  await sleep(400);
+  step("spectrum: sort toggled (ascending starts at 0) and back");
+
+  // 13. lookup of the first row's identity -> its slot
+  const first = await page.evaluate(() => {
+    const row = document.querySelector("[role=grid] [role=row][aria-rowindex]");
+    const t = row?.querySelector("[role=gridcell][data-col=publicKey] [title]")?.getAttribute("title") ?? "";
+    // innerText: the hex reading of a number is a hidden span (shown on hover) and must not count
+    return { slot: Number((row?.querySelector("[role=gridcell][data-col='$slot']")?.innerText ?? "").replace(/[^0-9]/g, "")), identity: t.split("\n")[0] };
+  });
+  if (!/^[A-Z]{60}$/.test(first.identity)) throw new Error(`no identity in the first row: ${JSON.stringify(first)}`);
+  await typeInto(page, "input[aria-label='Look up identity in spectrum']", first.identity);
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("[data-testid=lookup-hits] [data-hit]", { timeout: 10000 });
+  const hit = await page.$eval("[data-testid=lookup-hits] [data-hit]", (e) => Number(e.dataset.hit));
+  if (hit !== first.slot) throw new Error(`lookup hit slot ${hit} != row slot ${first.slot}`);
+  await waitFor(page, (id) => /EntityRecord/.test(document.querySelector("[aria-label='Inspector']")?.textContent ?? "") && document.querySelector("[aria-label='Inspector']")?.textContent.includes(`#${id}`), first.slot, 10000, "record selected in the inspector");
+  step(`lookup: ${first.identity.slice(0, 8)}… -> slot ${hit}, record shown in the inspector`);
+
+  // 14. universe: issuances by default, the assets sub-table, click an asset -> ownerships filtered by its slot
+  await page.evaluate(() => document.querySelector("[role=option][data-target='universe']")?.click());
+  await page.waitForSelector("[data-testid=ledger-view-universe] [data-testid=assets-table] [data-asset-row]", { timeout: 20000 });
+  await page.waitForSelector("[data-testid=ledger-view-universe] [role=grid] [role=row][aria-rowindex] [role=gridcell]", { timeout: 20000 });
+  const view = await page.evaluate(() => [...document.querySelectorAll("[role=tablist][aria-label='Table view'] [data-view]")].find((t) => t.getAttribute("aria-selected") === "true" || t.dataset.state === "active" || t.hasAttribute("data-active"))?.dataset.view);
+  if (view !== "issuances") throw new Error(`universe should open on issuances, got ${view}`);
+  const issuances = await page.$eval("[data-testid=ledger-issuances]", (e) => e.textContent);
+  if (!/60/.test(issuances)) throw new Error(`issuances tile: ${issuances}`);
+  const qx = await page.$eval("[data-asset-row='QX']", (e) => ({ slot: Number(e.dataset.assetSlot), owners: e.textContent }));
+  await page.evaluate(() => document.querySelector("[data-asset-row='QX']").click());
+  await page.waitForSelector("[data-testid=asset-filter-chip]", { timeout: 10000 });
+  await waitFor(page, (slot) => [...document.querySelectorAll("[data-testid=filter-chip]")].some((c) => c.textContent.includes(`issuanceIndex = ${slot}`)), qx.slot, 10000, "issuanceIndex filter chip");
+  await waitFor(page, () => /of 4,667 rows/.test(document.querySelector("[data-testid=table-total]")?.textContent ?? ""), null, 20000, "filtered ownership total");
+  const total = await page.$eval("[data-testid=table-total]", (e) => e.textContent);
+  await waitFor(page, () => !document.querySelector("[role=grid] [data-placeholder]") && document.querySelectorAll("[role=grid] [role=row][aria-rowindex] [data-asset='QX']").length > 3, null, 15000, "QX ownership rows");
+  step(`universe: issuances (60) + assets table; QX (slot ${qx.slot}) -> ownerships filtered: ${total.trim()}`);
+
+  // 15. Find on a ledger: an identity goes through ledger.lookup (instant), the note says so
+  await page.keyboard.down("Control");
+  await page.keyboard.press("KeyF");
+  await page.keyboard.up("Control");
+  await page.waitForSelector("#find-input", { timeout: 5000 });
+  await typeInto(page, "#find-input", first.identity);
+  await waitFor(page, () => /looked up/.test(document.querySelector("[data-testid=find-note]")?.textContent ?? ""), null, 5000, "lookup hint");
+  await page.keyboard.press("Enter");
+  await waitFor(page, () => document.querySelector("[data-testid=find-note]")?.dataset.via === "lookup", null, 15000, "find answered by ledger.lookup");
+  const viaNote = await page.$eval("[data-testid=find-note]", (e) => e.textContent);
+  if (!/ledger\.lookup/.test(viaNote)) throw new Error(`find note: ${viaNote}`);
+  step(`find on a ledger: identity answered by ledger.lookup (${viaNote.slice(0, 50).trim()}…)`);
+  await page.evaluate(() => document.querySelector("[aria-label='Close find panel']")?.click());
+  await page.evaluate(() => document.querySelector("[role=option][data-contract='1']")?.click());
+  await sleep(300);
 
   await sleep(300);
   if (errors.length) throw new Error(`console errors:\n${errors.join("\n")}`);

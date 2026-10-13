@@ -27,7 +27,8 @@ import type { MockSim } from "@/rpc/mock";
 import { resolveTheme, themeAtom, toggleTheme } from "@/store/prefs";
 import { openSearch } from "@/store/search";
 import { store } from "@/store/store";
-import { appInfoAtom, helpDialogAtom, openDialogAtom, paletteOpenAtom, pendingChangesAtom, contractsAtom, selectedContractInfoAtom, workspaceAtom } from "@/store/workspace";
+import { appInfoAtom, helpDialogAtom, openDialogAtom, paletteOpenAtom, pendingChangesAtom, contractsAtom, selectedContractInfoAtom, selectedTargetAtom, workspaceAtom } from "@/store/workspace";
+import { isLedger, ledgerLabel } from "@/lib/target";
 import { MOD } from "./HelpDialog";
 import { SettingsPopover } from "./SettingsPopover";
 
@@ -49,6 +50,7 @@ function MockMenuImpl() {
   useEffect(() => mock?.backend.onLiveChange(setLive), [mock]);
   const [sim, setSim] = useState(mock?.backend.getSim() ?? { gitMissing: false, offline: false });
   const selected = useAtomValue(selectedContractInfoAtom);
+  const target = useAtomValue(selectedTargetAtom);
   if (!mock) return null;
   const simulate = (patch: Partial<MockSim>) => {
     mock.backend.setSim(patch);
@@ -76,6 +78,9 @@ function MockMenuImpl() {
           Change {selected?.name || "selected contract"} now
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => mock.backend.triggerChange()}>Change a random contract</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => isLedger(target) && mock.backend.triggerChange(target)} disabled={!isLedger(target)}>
+          Change {isLedger(target) ? ledgerLabel(target) : "selected ledger"} now
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => mock.backend.triggerWorkspaceUpdated()}>Emit workspace.updated</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuCheckboxItem checked={sim.gitMissing} onCheckedChange={(v) => simulate({ gitMissing: !!v })}>
@@ -101,7 +106,7 @@ export function TopBar() {
   const theme = resolveTheme(useAtomValue(themeAtom));
   const pending = useAtomValue(pendingChangesAtom);
   const contracts = useAtomValue(contractsAtom);
-  const names = pending.contracts.map((i) => contracts.find((c) => c.index === i)?.name || `#${i}`);
+  const names = pending.targets.map((t) => (isLedger(t) ? ledgerLabel(t) : contracts.find((c) => c.index === t)?.name || `#${t}`));
   const KindIcon = ws ? KIND_ICON[ws.core.kind] : TagIcon;
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-canvas px-3" role="banner">
@@ -140,7 +145,7 @@ export function TopBar() {
         )}
       </button>
 
-      {pending.contracts.length > 0 && (
+      {pending.targets.length > 0 && (
         <button
           type="button"
           onClick={acknowledgeChanges}

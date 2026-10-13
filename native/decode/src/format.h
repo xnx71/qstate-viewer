@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 
+#include "int128.h"
 #include "qstate/decode/identity.h"
 #include "qstate/decode/schema_index.h"
 #include "qstate/decode/values.h"
@@ -47,6 +48,17 @@ public:
 
     // Slot summary of a ProposalVoting slot record (ProposalWithAllVoteData<...>): epoch, type, option histogram.
     std::optional<std::string> proposalSummary(TypeId t, const std::uint8_t* p, std::size_t avail) const;
+
+    // Ledger records. `assetName` (universe ownership / possession) is the resolved name of the referenced issuance
+    // when the caller knows it ("" otherwise: the slot index is shown instead).
+    std::string entityPreview(const LedgerLayout& l, const std::uint8_t* p, std::size_t avail) const;
+    std::string assetPreview(const LedgerLayout& l, const std::uint8_t* p, std::size_t avail,
+                             const std::string& assetName = {}) const;
+    // The `type` byte of a universe record as an enum-like value (1 issuance, 2 ownership, 3 possession, 0 empty).
+    LeafValue assetTypeValue(unsigned type) const;
+    static const char* assetTypeName(unsigned type); // "issuance" | "ownership" | "possession" | "empty" | nullptr
+    // Decimal text of a signed 128-bit value.
+    static std::string decimalI128(wide::i128 v);
 
     // Contract id recognition for an id value.
     std::optional<std::uint32_t> contractIndexOf(const std::uint8_t* p32) const;

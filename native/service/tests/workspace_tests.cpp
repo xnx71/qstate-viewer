@@ -747,13 +747,13 @@ TEST_CASE("live: files appearing and disappearing produce workspace.updated") {
     CHECK(up3["state"]["epoch"] == 6); // no explicit epoch: the newest one is shown
 }
 
-TEST_CASE("live: only state files are watched") {
+TEST_CASE("live: only state and ledger files are watched") {
     Harness h;
     Fixture f;
     EventCollector events(h.bus);
     h.ok("workspace.open", f.request());
-    writeFile(f.state / "spectrum.005", "abc");
     writeFile(f.state / "notes.txt", "abc");
+    writeFile(f.state / "contract_exec_fees_rec.005", "abc");
     fs::create_directories(f.state / "ep5");
     std::this_thread::sleep_for(milliseconds(500));
     CHECK(events.count("contracts.changed") == 0);
@@ -761,6 +761,15 @@ TEST_CASE("live: only state files are watched") {
     // while a state file is noticed
     appendBytes(f.state / "contract0002.005", patternBytes(8, 3));
     CHECK_FALSE(events.waitFor("contracts.changed").is_null());
+    // and a ledger file appearing rescans the directory
+    const std::size_t seen = events.size();
+    writeFile(f.state / "spectrum.005", "abc");
+    json up = events.waitFor("workspace.updated", milliseconds(8000), [](const json& w) {
+        for (const json& l : w["ledgers"])
+            if (l["kind"] == "spectrum" && l.contains("file")) return true;
+        return false;
+    }, seen);
+    REQUIRE_FALSE(up.is_null());
 }
 
 TEST_CASE("live: a single state file is watched on its own") {

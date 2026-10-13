@@ -89,6 +89,18 @@ void SchemaIndex::buildType(TypeId id) {
         tx.elemSize = e.size;
         tx.byteElems = e.size == 1 && (e.kind == TypeKind::Prim && e.prim != PrimKind::Bool && e.prim != PrimKind::Float);
         if (tx.count > kMaxCapacity || (tx.elemSize != 0 && tx.count > 0xFFFFFFFFFFFFull / tx.elemSize)) tx.cls = Cls::Opaque;
+        if (tx.cls == Cls::CArray && (t.role.kind == RoleKind::SpectrumTable || t.role.kind == RoleKind::UniverseTable)) {
+            // A ledger table: the element must be a decodable ledger record, otherwise it stays a plain array.
+            const schema::LedgerKind kind = t.role.kind == RoleKind::SpectrumTable ? schema::LedgerKind::Spectrum
+                                                                                   : schema::LedgerKind::Universe;
+            LedgerLayout l;
+            tx.layoutError = buildLedgerRecord(t.element, kind, l);
+            if (tx.layoutError.empty() && tx.count > 0) {
+                l.capacity = tx.count;
+                tx.ledger = std::move(l);
+                tx.cls = Cls::Ledger;
+            }
+        }
         return;
     }
     case TypeKind::Record: break;
@@ -103,9 +115,104 @@ void SchemaIndex::buildType(TypeId id) {
     case RoleKind::Bit: tx.cls = t.size == 1 ? Cls::Bit : tx.cls; return;
     case RoleKind::Uint128: tx.cls = t.size == 16 ? Cls::U128 : tx.cls; return;
     case RoleKind::DateTime: tx.cls = t.size == 8 ? Cls::DateTime : tx.cls; return;
+    case RoleKind::EntityRecord:
+    case RoleKind::AssetRecord: {
+        const schema::LedgerKind kind = t.role.kind == RoleKind::EntityRecord ? schema::LedgerKind::Spectrum
+                                                                              : schema::LedgerKind::Universe;
+        LedgerLayout l;
+        tx.layoutError = buildLedgerRecord(id, kind, l);
+        if (tx.layoutError.empty()) {
+            tx.ledger = std::move(l);
+            tx.cls = kind == schema::LedgerKind::Spectrum ? Cls::EntityRecord : Cls::AssetRecord;
+        }
+        return;
+    }
+    case RoleKind::SpectrumTable:
+    case RoleKind::UniverseTable: return; // only meaningful on array types
     default: break;
     }
     buildContainer(id, tx);
+}
+
+std::string SchemaIndex::buildLedgerRecord(TypeId id, schema::LedgerKind kind, LedgerLayout& out) const {
+    if (id >= schema_->types.size()) return "record type missing";
+    const Type& t = schema_->types[id];
+    if (t.kind != TypeKind::Record) return "record type is not a struct";
+    out.kind = kind;
+    out.recordType = id;
+    out.recordSize = t.size;
+    auto field = [&](const Type& rec, const char* name, std::uint64_t size, std::uint64_t& off) -> std::string {
+        const Field* f = findField(rec, name);
+        if (!f) return "member " + std::string(name) + " missing in " + rec.name;
+        if (size && f->size != size) return "member " + std::string(name) + " of " + rec.name + " has size " + std::to_string(f->size) + ", expected " + std::to_string(size);
+        if (f->offset + f->size > rec.size) return "member " + std::string(name) + " exceeds " + rec.name;
+        off = f->offset;
+        return {};
+    };
+    std::string err;
+    if (kind == schema::LedgerKind::Spectrum) {
+        if (t.size != 64) return "sizeof(" + t.name + ") is " + std::to_string(t.size) + ", expected 64";
+        if (!(err = field(t, "publicKey", 32, out.keyOff)).empty()) return err;
+        if (!(err = field(t, "incomingAmount", 8, out.incomingOff)).empty()) return err;
+        if (!(err = field(t, "outgoingAmount", 8, out.outgoingOff)).empty()) return err;
+        return {};
+    }
+    // universe: one union member with the three alternatives
+    const Field* uf = nullptr;
+    for (const Field& f : t.fields) {
+        if (f.type < schema_->types.size() && schema_->types[f.type].kind == TypeKind::Record &&
+            schema_->types[f.type].recordKind == schema::RecordKind::Union) {
+            uf = &f;
+            break;
+        }
+    }
+    if (!uf) return t.name + " has no union member";
+    out.unionField = uf->name;
+    out.unionType = uf->type;
+    const Type& u = schema_->types[uf->type];
+    static const char* altNames[3] = {"issuance", "ownership", "possession"};
+    std::uint64_t keyOff = 0, typeOff = 0;
+    for (int i = 0; i < 3; ++i) {
+        const Field* af = findField(u, altNames[i]);
+        if (!af || af->type >= schema_->types.size()) return "union alternative " + std::string(altNames[i]) + " missing in " + u.name;
+        const Type& a = schema_->types[af->type];
+        if (a.kind != TypeKind::Record) return "union alternative " + std::string(altNames[i]) + " is not a struct";
+        LedgerLayout::Alternative& alt = out.alts[i];
+        alt.name = altNames[i];
+        alt.type = af->type;
+        std::uint64_t k = 0, ty = 0;
+        if (!(err = field(a, "publicKey", 32, k)).empty()) return err;
+        if (!(err = field(a, "type", 1, ty)).empty()) return err;
+        k += uf->offset + af->offset;
+        ty += uf->offset + af->offset;
+        if (i == 0) {
+            keyOff = k;
+            typeOff = ty;
+        } else if (k != keyOff || ty != typeOff) {
+            return "publicKey / type are not at the same offset in every alternative of " + u.name;
+        }
+        const std::uint64_t base = uf->offset + af->offset;
+        alt.offset = base;
+        if (i == 0) {
+            if (!(err = field(a, "name", 7, alt.nameOff)).empty()) return err;
+            if (!(err = field(a, "numberOfDecimalPlaces", 1, alt.decimalsOff)).empty()) return err;
+            if (!(err = field(a, "unitOfMeasurement", 7, alt.uomOff)).empty()) return err;
+            alt.nameOff += base;
+            alt.decimalsOff += base;
+            alt.uomOff += base;
+        } else {
+            if (!(err = field(a, "managingContractIndex", 2, alt.contractOff)).empty()) return err;
+            if (!(err = field(a, i == 1 ? "issuanceIndex" : "ownershipIndex", 4, alt.indexOff)).empty()) return err;
+            if (!(err = field(a, "numberOfShares", 8, alt.sharesOff)).empty()) return err;
+            alt.contractOff += base;
+            alt.indexOff += base;
+            alt.sharesOff += base;
+        }
+    }
+    out.keyOff = keyOff;
+    out.typeOff = typeOff;
+    if (t.size != 48) return "sizeof(" + t.name + ") is " + std::to_string(t.size) + ", expected 48";
+    return {};
 }
 
 void SchemaIndex::buildMembers(TypeId id, TypeX& tx) {

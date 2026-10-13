@@ -12,6 +12,8 @@ import { buildGqmprop } from './gqmprop';
 import { buildSwatch } from './swatch';
 import { buildCcf } from './ccf';
 import { buildQearn } from './qearn';
+import { buildLedgerWorld } from '../ledgers';
+import type { LedgerWorld } from '../ledgers';
 
 export type { ContractDef } from './kit';
 
@@ -19,6 +21,8 @@ export interface World {
   seed: number;
   types: Types;
   contracts: ContractDef[];
+  /** The two ledgers (spectrum / universe): record types and the live records. */
+  ledgers: LedgerWorld;
   byIndex(index: number): ContractDef | undefined;
   typeInfo(id: number): TypeInfo | undefined;
 }
@@ -39,10 +43,12 @@ export function buildWorld(seed: number): World {
     buildCcf(kit),
     buildQearn(kit),
   ];
+  const ledgers = buildLedgerWorld(types, seed);
   return {
     seed,
     types,
     contracts,
+    ledgers,
     byIndex: (i) => contracts.find((c) => c.index === i),
     typeInfo: (id) => {
       const n = types.nodes[id];

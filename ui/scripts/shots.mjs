@@ -1,10 +1,11 @@
 // Screenshot tour (headless Chrome) against the mock backend.
 // Usage: node scripts/shots.mjs <outDir> [--prefix=a] [--size=1500x900] [--theme=dark|light] [--ui=compact|comfortable|large]
-//                                        [--part=all|dialog|main] [--url=http://localhost:5199/] [--mode=file|setcontent]
+//                                        [--part=all|dialog|main|ledger] [--url=http://localhost:5199/] [--mode=file|setcontent]
+// --part=ledger: only the ledger tour (spectrum / universe tables, summary, lookup, record in tree, single ledger file).
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { chooseFolder, clickText, expandRow, gotoFolder, launch, openWorkspace, pickTag, sleep, typeInto, waitSynced, watchErrors } from "./lib.mjs";
+import { chooseFolder, clickText, expandRow, gotoFolder, launch, openWorkspace, pickTag, sleep, typeInto, waitFor, waitSynced, watchErrors } from "./lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const out = process.argv[2];
@@ -102,6 +103,88 @@ if (part !== "main") {
   await openWorkspace(page);
 }
 if (part === "dialog") {
+  await browser.close();
+  console.log(`${prefix}: errors`, errors);
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------- ledgers (spectrum / universe)
+async function ledgerTour() {
+  const sidebar = await page.$("[aria-label='Contracts']");
+  await page.evaluate(() => document.querySelector("[role=option][data-target='spectrum']")?.scrollIntoView({ block: "center" }));
+  await sleep(600);
+  await page.evaluate(() => document.querySelector("[role=option][data-target='spectrum']")?.click());
+  await page.waitForSelector("[data-testid=ledger-view-spectrum] [role=grid] [role=row][aria-rowindex] [role=gridcell]", { timeout: 20000 });
+  await page.waitForSelector("[data-testid=ledger-population]", { timeout: 20000 });
+  await sleep(900);
+  await shot(page, "30a-ledger-spectrum-table-summary");
+  await sidebar.screenshot({ path: path.join(out, `${prefix}-30b-ledger-sidebar.png`) });
+  // lookup of the first row's identity (the contract-1 id after the default sort: the largest balance)
+  const identity = await page.evaluate(() => {
+    const cell = document.querySelector("[role=grid] [role=row][aria-rowindex] [role=gridcell][data-col=publicKey] [title]");
+    return cell ? cell.getAttribute("title").split("\n")[0] : "";
+  });
+  await typeInto(page, "input[aria-label='Look up identity in spectrum']", identity);
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("[data-testid=lookup-hits] [data-hit]", { timeout: 10000 });
+  await sleep(500);
+  await shot(page, "30c-ledger-lookup-hits");
+  // the record in the tree + inspector
+  await page.evaluate(() => document.querySelector("[data-testid=tab-tree] button")?.click());
+  await sleep(900);
+  await shot(page, "30d-ledger-record-tree-inspector");
+  await clickText(page, "Bytes", "[role=tab]");
+  await sleep(800);
+  await shot(page, "30e-ledger-record-bytes");
+  await clickText(page, "Overview", "[role=tab]");
+  // find panel: identity -> ledger.lookup path
+  await press("Control+KeyF");
+  await page.waitForSelector("#find-input");
+  await typeInto(page, "#find-input", identity);
+  await page.keyboard.press("Enter");
+  await waitFor(page, () => document.querySelector("[data-testid=find-note]")?.dataset.via === "lookup", null, 10000, "lookup via find");
+  await sleep(400);
+  await shot(page, "30f-ledger-find-lookup");
+  await page.evaluate(() => document.querySelector("[aria-label='Close find panel']")?.click());
+  await sleep(200);
+  // universe: issuances + assets sub-table
+  await page.evaluate(() => document.querySelector("[role=option][data-target='universe']")?.click());
+  await page.waitForSelector("[data-testid=ledger-view-universe] [data-testid=assets-table] [data-asset-row]", { timeout: 20000 });
+  await page.waitForSelector("[data-testid=ledger-view-universe] [role=grid] [role=row][aria-rowindex] [role=gridcell]", { timeout: 20000 });
+  await sleep(900);
+  await shot(page, "31a-universe-issuances-assets");
+  await page.evaluate(() => document.querySelector("[data-asset-row='QX']")?.click());
+  await page.waitForSelector("[data-testid=asset-filter-chip]", { timeout: 10000 });
+  await waitFor(page, () => !document.querySelector("[role=grid] [data-placeholder]") && document.querySelectorAll("[role=grid] [role=row][aria-rowindex]").length > 3, null, 15000, "filtered ownerships");
+  await sleep(700);
+  await shot(page, "31b-universe-ownerships-filtered-by-asset");
+  const cell = (await page.$$("[role=grid] [role=row][aria-rowindex] [role=gridcell]"))[2];
+  if (cell) {
+    await rightClick(cell, 60);
+    await shot(page, "31c-ctx-ledger-row");
+    await page.keyboard.press("Escape");
+    await sleep(200);
+  }
+  await page.evaluate(() => document.querySelector("[role=tablist][aria-label='Table view'] [data-view='all']")?.click());
+  await sleep(900);
+  await shot(page, "31d-universe-all-types");
+}
+if (part === "ledger") {
+  await sleep(500);
+  await ledgerTour();
+  // single ledger file through the dialog
+  await page.click("[aria-label='Workspace: change']");
+  await page.waitForSelector('input[aria-label="Repository URL"]');
+  await waitSynced(page);
+  await gotoFolder(page, STATE, "spectrum.229");
+  await page.evaluate(() => [...document.querySelectorAll("[role=option][data-ledger]")].find((o) => o.textContent.includes("spectrum.229"))?.click());
+  await page.waitForSelector("[data-testid=selection][data-scope=file]");
+  await sleep(300);
+  await shot(page, "34-dialog-ledger-file-selected");
+  await openWorkspace(page);
+  await page.waitForSelector("[data-testid=ledger-view-spectrum] [role=grid] [role=row][aria-rowindex] [role=gridcell]", { timeout: 20000 });
+  await sleep(900);
+  await shot(page, "35-main-single-ledger-file");
   await browser.close();
   console.log(`${prefix}: errors`, errors);
   process.exit(0);
@@ -283,6 +366,11 @@ await page.click("[aria-label='Reload workspace']");
 await sleep(250);
 await shot(page, "20b-toast-reload");
 await sleep(1500);
+
+// ledgers
+await ledgerTour();
+await page.evaluate(() => document.querySelector("[role=option][data-contract='1']")?.click());
+await sleep(400);
 
 // theme toggle
 await page.click("[aria-label='Toggle theme']");

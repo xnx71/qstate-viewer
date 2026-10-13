@@ -40,6 +40,15 @@ const GROUPS: { title: string; items: { keys: string[]; text: string }[] }[] = [
     ],
   },
   {
+    title: "Ledgers (Spectrum, Universe)",
+    items: [
+      { keys: ["Enter"], text: "Look up the typed identity (60 letters / 64 hex) by hash" },
+      { keys: ["Click"], text: "Slot link or lookup hit: show the record in the inspector" },
+      { keys: ["Shift", "Click"], text: "… and switch to the tree" },
+      { keys: ["Click asset"], text: "Universe: ownerships of that issuance" },
+    ],
+  },
+  {
     title: "Contracts and find",
     items: [
       { keys: ["↑", "↓"], text: "Move through the contract list" },

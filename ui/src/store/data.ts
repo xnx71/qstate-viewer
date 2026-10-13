@@ -5,17 +5,20 @@ import { useAtomValue } from "jotai";
 import { invoke } from "@/rpc/client";
 import type {
   ChildrenPage,
-  ContractInfo,
+  LedgerLookup,
+  LedgerSummary,
   NodeId,
   NodeInfo,
+  StateTarget,
   TableInfo,
   TablePage,
   TypeId,
   TypeInfo,
 } from "@/rpc/contract";
 import { dedupeStrings } from "@/lib/dedupeStrings";
+import { targetKey } from "@/lib/target";
 import { createQueryFamily, useQuery, type QueryResult } from "./query";
-import { contractAtomFamily, workspaceIdAtom } from "./workspace";
+import { targetInfoAtomFamily, workspaceIdAtom } from "./workspace";
 import { store } from "./store";
 
 const MB = 1024 * 1024;
@@ -29,6 +32,10 @@ export const typeQ = createQueryFamily<TypeInfo>({ name: "type", compact: dedupe
 export const bytesQ = createQueryFamily<BytesBlock>({ name: "bytes", maxEntries: 600, maxBytes: 3 * MB });
 export const tableInfoQ = createQueryFamily<TableInfo>({ name: "tableInfo", compact: dedupeStrings, maxEntries: 50, maxBytes: 1 * MB });
 export const tablePageQ = createQueryFamily<TablePage>({ name: "tablePage", compact: dedupeStrings, maxEntries: 400, maxBytes: 24 * MB });
+/** One summary per ledger and generation (the universe summary lists every issuance: a few hundred rows). */
+export const ledgerSummaryQ = createQueryFamily<LedgerSummary>({ name: "ledgerSummary", compact: dedupeStrings, maxEntries: 4, maxBytes: 2 * MB });
+/** Recent identity lookups (tiny answers; keyed by generation like everything else). */
+export const ledgerLookupQ = createQueryFamily<LedgerLookup>({ name: "ledgerLookup", compact: dedupeStrings, maxEntries: 64, maxBytes: 256 * 1024 });
 
 export interface BytesBlock {
   offset: number;
@@ -40,38 +47,42 @@ export const CHILD_PAGE = 200;
 export const BYTES_BLOCK = 2048;
 export const TABLE_BLOCK = 100;
 
-/** `${workspace}.${generation}`: changes whenever the data of a contract may have changed. */
-export function versionFor(wsId: number, contract: ContractInfo | undefined): string {
-  return `${wsId}.${contract?.generation ?? 0}`;
+/** `${workspace}.${generation}`: changes whenever the data of a contract / ledger may have changed. */
+export function versionFor(wsId: number, info: { generation: number } | undefined): string {
+  return `${wsId}.${info?.generation ?? 0}`;
 }
 
-/** Atom family: version string of a contract (changes with workspace id and file generation). */
-export const contractVersionAtom = atomFamily((contract: number) =>
-  atom((get) => versionFor(get(workspaceIdAtom), get(contractAtomFamily(contract)))),
+/** Atom family: version string of a target (changes with workspace id and file generation). */
+export const contractVersionAtom = atomFamily((target: StateTarget) =>
+  atom((get) => versionFor(get(workspaceIdAtom), get(targetInfoAtomFamily(target)))),
 );
 
-export function useContractVersion(contract: number): string {
-  return useAtomValue(contractVersionAtom(contract));
+export function useContractVersion(target: StateTarget): string {
+  return useAtomValue(contractVersionAtom(target));
 }
 
-export function currentVersion(contract: number): string {
-  return store.get(contractVersionAtom(contract));
+export function currentVersion(target: StateTarget): string {
+  return store.get(contractVersionAtom(target));
 }
 
 // ---- keys ------------------------------------------------------------------
+// A contract keeps the key it always had (its index as text); a ledger uses its name (see lib/target.ts).
 
-export const nodeBase = (c: number, id: NodeId) => `n|${c}|${id}`;
-export const childrenBase = (c: number, id: NodeId, view: string, hideEmpty: boolean, page: number) =>
-  `ch|${c}|${id}|${view}|${hideEmpty ? 1 : 0}|${page}`;
+export const nodeBase = (c: StateTarget, id: NodeId) => `n|${targetKey(c)}|${id}`;
+export const childrenBase = (c: StateTarget, id: NodeId, view: string, hideEmpty: boolean, page: number) =>
+  `ch|${targetKey(c)}|${id}|${view}|${hideEmpty ? 1 : 0}|${page}`;
+export const tableInfoBase = (c: StateTarget, id: NodeId, view: string | undefined) => `ti|${targetKey(c)}|${id}|${view ?? ""}`;
+export const ledgerSummaryBase = (kind: "spectrum" | "universe") => `ls|${kind}`;
+export const ledgerLookupBase = (kind: "spectrum" | "universe", identity: string) => `ll|${kind}|${identity}`;
 
 // ---- imperative fetchers (used by actions) -----------------------------------
 
-export function fetchNode(contract: number, id: NodeId): Promise<NodeInfo> {
+export function fetchNode(contract: StateTarget, id: NodeId): Promise<NodeInfo> {
   return nodeQ.fetch(nodeBase(contract, id), currentVersion(contract), () => invoke("state.node", { contract, id }));
 }
 
 export function fetchChildren(
-  contract: number,
+  contract: StateTarget,
   id: NodeId,
   view: "logical" | "raw",
   hideEmpty: boolean,
@@ -82,22 +93,30 @@ export function fetchChildren(
   );
 }
 
-function childrenParams(contract: number, id: NodeId, view: "logical" | "raw", hideEmpty: boolean, page: number) {
+function childrenParams(contract: StateTarget, id: NodeId, view: "logical" | "raw", hideEmpty: boolean, page: number) {
   return { contract, id, view, hideEmpty: hideEmpty || undefined, offset: page * CHILD_PAGE, limit: CHILD_PAGE };
+}
+
+export function fetchLedgerSummary(kind: "spectrum" | "universe"): Promise<LedgerSummary> {
+  return ledgerSummaryQ.fetch(ledgerSummaryBase(kind), currentVersion(kind), () => invoke("ledger.summary", { kind }));
+}
+
+export function fetchLedgerLookup(kind: "spectrum" | "universe", identity: string): Promise<LedgerLookup> {
+  return ledgerLookupQ.fetch(ledgerLookupBase(kind, identity), currentVersion(kind), () => invoke("ledger.lookup", { kind, identity }));
 }
 
 // ---- hooks -------------------------------------------------------------------
 
-export function useNode(contract: number | null, id: NodeId | null): QueryResult<NodeInfo> {
+export function useNode(contract: StateTarget | null, id: NodeId | null): QueryResult<NodeInfo> {
   const version = useContractVersion(contract ?? -1);
   const enabled = contract !== null && id !== null;
   return useQuery(nodeQ, enabled ? nodeBase(contract, id) : null, version, () =>
-    invoke("state.node", { contract: contract as number, id: id as NodeId }),
+    invoke("state.node", { contract: contract as StateTarget, id: id as NodeId }),
   );
 }
 
 export function useChildrenPage(
-  contract: number,
+  contract: StateTarget,
   id: NodeId,
   view: "logical" | "raw",
   hideEmpty: boolean,
@@ -117,11 +136,15 @@ export function useChildrenPage(
   );
 }
 
-export function useTableInfo(contract: number, id: NodeId, view: string | undefined): QueryResult<TableInfo> {
+export function useTableInfo(contract: StateTarget, id: NodeId, view: string | undefined): QueryResult<TableInfo> {
   const version = useContractVersion(contract);
-  return useQuery(tableInfoQ, `ti|${contract}|${id}|${view ?? ""}`, version, () =>
-    invoke("table.describe", { contract, id, view }),
-  );
+  return useQuery(tableInfoQ, tableInfoBase(contract, id, view), version, () => invoke("table.describe", { contract, id, view }));
+}
+
+/** The ledger summary (one scan per generation on the native side). `kind === null` disables the hook. */
+export function useLedgerSummary(kind: "spectrum" | "universe" | null, fetch = true): QueryResult<LedgerSummary> {
+  const version = useContractVersion(kind ?? -1);
+  return useQuery(ledgerSummaryQ, kind === null ? null : ledgerSummaryBase(kind), version, () => invoke("ledger.summary", { kind: kind as "spectrum" }), { fetch });
 }
 
 // ---- type info (batched) -------------------------------------------------------
@@ -169,13 +192,13 @@ export function useTypeInfo(typeId: TypeId | null | undefined): QueryResult<Type
 }
 
 /** A table tab was closed: its pages and description are not needed any more. */
-export function dropTableCaches(contract: number, id: NodeId): void {
-  const prefix = `tp|[${contract},${JSON.stringify(id)},`; // see querySignature()
+export function dropTableCaches(contract: StateTarget, id: NodeId): void {
+  const prefix = `tp|[${JSON.stringify(contract)},${JSON.stringify(id)},`; // see querySignature()
   tablePageQ.invalidate((base) => base.startsWith(prefix));
-  tableInfoQ.invalidate((base) => base.startsWith(`ti|${contract}|${id}|`));
+  tableInfoQ.invalidate((base) => base.startsWith(`ti|${targetKey(contract)}|${id}|`));
 }
 
 /** Clear every cache (workspace replaced). */
 export function clearAllQueries(): void {
-  for (const q of [nodeQ, childrenQ, typeQ, bytesQ, tableInfoQ, tablePageQ]) q.invalidate();
+  for (const q of [nodeQ, childrenQ, typeQ, bytesQ, tableInfoQ, tablePageQ, ledgerSummaryQ, ledgerLookupQ]) q.invalidate();
 }

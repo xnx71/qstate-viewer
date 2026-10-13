@@ -1,3 +1,4 @@
+import type { StateTarget } from "@/rpc/contract";
 import { ChevronRightIcon } from "lucide-react";
 import { CopyButton } from "@/components/common/CopyButton";
 import { revealNode, type PathItem } from "@/store/tree";
@@ -6,7 +7,7 @@ import { cn } from "@/lib/utils";
 const MAX_VISIBLE = 5;
 
 /** Clickable path root -> selected node (collapses the middle when long). */
-export function Breadcrumb({ contract, path, className }: { contract: number; path: PathItem[]; className?: string }) {
+export function Breadcrumb({ contract, path, className }: { contract: StateTarget; path: PathItem[]; className?: string }) {
   if (path.length === 0) return <div className={className} />;
   const hidden = path.length > MAX_VISIBLE ? path.length - (MAX_VISIBLE - 1) : 0;
   const shown = hidden ? [path[0], ...path.slice(1 + hidden)] : path;

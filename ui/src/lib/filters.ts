@@ -1,5 +1,5 @@
 // Table filter / sort spec helpers (pure; unit tested).
-import type { FilterOp, FilterSpec, SortSpec, TableColumn, TableQuery } from "@/rpc/contract";
+import type { FilterOp, FilterSpec, SortSpec, StateTarget, TableColumn, TableQuery } from "@/rpc/contract";
 
 export const FILTER_OP_LABEL: Record<FilterOp, string> = {
   eq: "=",
@@ -107,11 +107,11 @@ export interface TableQueryState {
 }
 
 /** Stable signature identifying the result set (everything but the paging window). */
-export function querySignature(contract: number, id: string, q: TableQueryState, generation: number): string {
+export function querySignature(contract: StateTarget, id: string, q: TableQueryState, generation: number): string {
   return JSON.stringify([contract, id, q.view ?? "", q.sort, q.filters, q.hideEmpty, generation]);
 }
 
-export function buildTableQuery(contract: number, id: string, q: TableQueryState, offset: number, limit: number): TableQuery {
+export function buildTableQuery(contract: StateTarget, id: string, q: TableQueryState, offset: number, limit: number): TableQuery {
   const query: TableQuery = { contract, id, offset, limit: Math.min(1000, limit) };
   if (q.view) query.view = q.view;
   if (q.sort.length) query.sort = q.sort;

@@ -94,7 +94,7 @@ export async function chooseFolder(page, epoch) {
 
 export async function openWorkspace(page) {
   await clickText(page, "Open workspace", "button");
-  await waitFor(page, () => !document.querySelector("[role=dialog]") && !!document.querySelector("[role=option][data-contract]"), null, 30000, "workspace opened (dialog closed)");
+  await waitFor(page, () => !document.querySelector("[role=dialog]") && !!document.querySelector("[role=option][data-target]"), null, 30000, "workspace opened (dialog closed)");
 }
 
 /** Mock workspace (first run flow) opened and contract `index` selected, the tree showing. */

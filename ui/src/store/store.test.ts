@@ -9,7 +9,7 @@ import { closeTable, openTable, openTablesAtom, centerTabAtom, tableKey, patchTa
 import { revealNode, selectNode, setSelectedView, toggleRow, treeAtomFamily, loadTotal } from "./tree";
 import { gotoMatch, runSearch, searchAtom, setSearchInput } from "./search";
 import { prefsAtom } from "./prefs";
-import { appInfoAtom, contractsAtom, coreProgressAtom, openDialogAtom, openPhaseAtom, pendingChangesAtom, selectedContractAtom, workspaceAtom } from "./workspace";
+import { appInfoAtom, contractsAtom, coreProgressAtom, openDialogAtom, openPhaseAtom, pendingChangesAtom, selectedTargetAtom, workspaceAtom } from "./workspace";
 
 const REQ = { core: { repoUrl: "https://github.com/qubic/core", ref: "auto" }, statePath: "/home/mock/qubic/state" };
 const QX = 1;
@@ -36,7 +36,7 @@ describe("workspace lifecycle", () => {
     expect(store.get(prefsAtom).browseDir).toBe("/home/mock/qubic/state");
     expect(store.get(coreProgressAtom)?.phase).toBe("parse");
     expect(ws?.contracts.length).toBeGreaterThan(5);
-    expect(store.get(selectedContractAtom)).toBe(QX);
+    expect(store.get(selectedTargetAtom)).toBe(QX);
     expect(store.get(openPhaseAtom)).toEqual({ phase: "idle" });
   });
 
@@ -125,12 +125,12 @@ describe("live updates", () => {
     await new Promise((r) => setTimeout(r, 20));
     const after = store.get(contractsAtom).find((c) => c.index === 2);
     expect((after?.generation ?? 0) > (before?.generation ?? 0)).toBe(true);
-    expect(store.get(pendingChangesAtom).contracts).toContain(2);
+    expect(store.get(pendingChangesAtom).targets).toContain(2);
     const ws = store.get(workspaceAtom);
     expect(versionFor(ws?.id ?? 0, after)).not.toBe(versionFor(ws?.id ?? 0, before));
     // selecting the contract clears its pending marker
     selectContract(2);
-    expect(store.get(pendingChangesAtom).contracts).not.toContain(2);
+    expect(store.get(pendingChangesAtom).targets).not.toContain(2);
     selectContract(QX);
   });
 
@@ -139,7 +139,7 @@ describe("live updates", () => {
     mock.backend.triggerWorkspaceUpdated();
     await new Promise((r) => setTimeout(r, 30));
     expect(store.get(workspaceAtom)?.id).toBeGreaterThan(id);
-    expect(store.get(selectedContractAtom)).toBe(QX);
+    expect(store.get(selectedTargetAtom)).toBe(QX);
   });
 
   it("node queries return fresh values after a generation bump", async () => {

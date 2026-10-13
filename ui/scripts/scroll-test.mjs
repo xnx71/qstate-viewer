@@ -232,6 +232,66 @@ try {
   console.log(`  info table sort: old rows were ${sawStale ? "dimmed (.is-stale) while the new order loaded" : "replaced before a frame could show the dimming (fast load)"}`);
   await waitFor(page, () => !document.querySelector("[role=grid] .is-stale") && !document.querySelector("[role=grid] [data-placeholder]"), null, 10000, "sorted rows");
 
+  // ---- 4. the ledgers: the spectrum table (670k rows with real data) and the 2^24-slot raw tree ----------------------
+  await page.evaluate(() => document.querySelector("[role=option][data-target='spectrum']")?.click());
+  await page.waitForSelector("[data-testid=ledger-view-spectrum] [role=grid] [role=row][aria-rowindex] [role=gridcell]", { timeout: 20000 });
+  await waitFor(page, () => !document.querySelector("[role=grid] [data-placeholder]"), null, 20000, "spectrum rows");
+  await watch(page, GRID);
+  await sleep(300);
+  await resetMax(page);
+  for (let i = 0; i < 60; i++) {
+    await page.evaluate(() => { document.querySelector("[role=grid]").scrollTop += 120; });
+    await sleep(16);
+  }
+  await settle(page, 3000);
+  s = await stats(page);
+  check("spectrum table: scrolling never turns loaded rows into placeholders", s.violations.length === 0, `${s.violations.length} violations, max ${s.maxPh}`);
+  const specTop = await page.$eval("[role=grid]", (e) => e.scrollTop);
+  await resetMax(page);
+  const stotal = await page.$eval("[role=grid]", (e) => e.scrollHeight - e.clientHeight);
+  for (let i = 0; i < 15; i++) {
+    await scrollTo(page, "[role=grid]", Math.floor(stotal * (((i * 0.7548776) % 1) * 0.97)));
+    await sleep(25);
+  }
+  s = await stats(page);
+  check("spectrum table: drag keeps loaded rows", s.violations.length === 0, `${s.violations.length} violations`);
+  await settle(page, 4000);
+  await resetMax(page);
+  await scrollTo(page, "[role=grid]", specTop);
+  await sleep(90);
+  s = await stats(page);
+  check("spectrum table: back to a visited region shows zero placeholders", s.maxPh === 0, `max ${s.maxPh}`);
+
+  // the raw view of the whole hash table: 16,777,216 slots in the tree
+  await page.evaluate(() => document.querySelector("[data-testid=tab-tree] button")?.click());
+  await page.waitForSelector("[role=tree] [role=treeitem]", { timeout: 15000 });
+  await page.evaluate(() => document.querySelector("[role=tree] [role=treeitem]")?.click()); // the root row
+  await page.waitForSelector("[aria-label='Show raw members']", { timeout: 10000 });
+  await page.evaluate(() => document.querySelector("[aria-label='Show raw members']").click());
+  await waitFor(page, () => document.querySelector("[role=tree]").scrollHeight > 1_000_000 && /16,777,217 rows/.test(document.querySelector("[role=tree]").parentElement.innerText), null, 30000, "16,777,217 tree rows");
+  await watch(page, TREE);
+  await settle(page, 4000);
+  await resetMax(page);
+  const rtotal = await page.$eval("[role=tree]", (e) => e.scrollHeight - e.clientHeight);
+  for (let i = 0; i < 20; i++) {
+    await scrollTo(page, "[role=tree]", Math.floor(rtotal * (((i * 0.6180339) % 1) * 0.98)));
+    await sleep(20);
+  }
+  s = await stats(page);
+  check("raw 2^24-slot tree: drag never turns loaded rows into placeholders", s.violations.length === 0, `${s.violations.length} violations`);
+  const rawSettled = await settle(page, 5000);
+  s = await stats(page);
+  check("raw 2^24-slot tree: rows load where the drag stops", rawSettled && s.phNow === 0 && s.rowsNow >= 5, `${s.phNow} placeholders, ${s.rowsNow} rows`);
+  const rawTop = await page.$eval("[role=tree]", (e) => e.scrollTop);
+  await scrollTo(page, "[role=tree]", 0);
+  await settle(page, 4000);
+  await resetMax(page);
+  await scrollTo(page, "[role=tree]", rawTop);
+  await sleep(90);
+  s = await stats(page);
+  check("raw 2^24-slot tree: back to the last drag target shows zero placeholders", s.maxPh === 0, `max ${s.maxPh}`);
+  await page.evaluate(() => document.querySelector("[aria-label='Show raw members']")?.click());
+
   if (errors.length) throw new Error(`console errors:\n${errors.join("\n")}`);
   check("no console errors", true);
 } catch (e) {

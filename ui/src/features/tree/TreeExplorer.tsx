@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { rowPx } from "@/lib/sizes";
 import { useRowSlots } from "@/lib/useRowSlots";
 import { useScaledVirtualizer } from "@/lib/useScaledVirtualizer";
-import type { NodeInfo } from "@/rpc/contract";
+import type { NodeInfo, StateTarget } from "@/rpc/contract";
 import { usePageLoader, type LoaderPage } from "@/lib/usePageLoader";
 import { CHILD_PAGE, childrenBase, childrenQ, currentVersion, fetchChildren, useContractVersion } from "@/store/data";
 import { prefsAtom, uiSizeAtom, updatePrefs } from "@/store/prefs";
@@ -30,14 +30,14 @@ import { ancestorItems } from "./treePath";
 import { rowAt, rowCount, rowIndexOfPath, type RowRef } from "./treeOps";
 
 /** Synchronous NodeInfo lookup in the children cache (undefined when the page is not loaded yet). */
-function peekInfo(contract: number, ref: RowRef, hideEmpty: boolean): NodeInfo | undefined {
+function peekInfo(contract: StateTarget, ref: RowRef, hideEmpty: boolean): NodeInfo | undefined {
   if (ref.parent === null) return undefined;
   const base = childrenBase(contract, ref.parent.id, ref.parent.view, hideEmpty, Math.floor(ref.index / CHILD_PAGE));
   const page = childrenQ.peek(base, currentVersion(contract));
   return page?.items[ref.index - page.offset];
 }
 
-export function TreeExplorer({ contract }: { contract: number }) {
+export function TreeExplorer({ contract }: { contract: StateTarget }) {
   const tree = useAtomValue(treeAtomFamily(contract));
   const prefs = useAtomValue(prefsAtom);
   const scrollRef = useRef<HTMLDivElement>(null);

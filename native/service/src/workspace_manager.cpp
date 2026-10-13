@@ -136,21 +136,38 @@ std::string trimmed(const std::string& s) {
 }
 
 // Keeps only the one state file of a single-file workspace (and no other files of the directory).
-void restrictToFile(support::StateDirScan& scan, std::uint32_t index, std::uint32_t ext) {
+void restrictToFile(support::StateDirScan& scan, const StateTarget& target, std::uint32_t ext) {
     std::vector<support::StateFileEntry> keep;
-    if (const support::EpochFileSet* set = scan.find(ext)) {
+    std::vector<support::OtherFileEntry> keepOthers;
+    if (target.isLedger()) {
+        const support::OtherFileKind kind = *target.ledger == schema::LedgerKind::Spectrum ? support::OtherFileKind::Spectrum
+                                                                                             : support::OtherFileKind::Universe;
+        for (const support::OtherFileEntry& o : scan.others) {
+            if (o.kind == kind && o.ext == ext) keepOthers.push_back(o);
+        }
+    } else if (const support::EpochFileSet* set = scan.find(ext)) {
         for (const support::StateFileEntry& f : set->contracts) {
-            if (f.index == index) keep.push_back(f);
+            if (f.index == target.contract) keep.push_back(f);
         }
     }
     scan.epochs.clear();
-    scan.others.clear();
+    scan.others = std::move(keepOthers);
     scan.snapshots.clear();
     if (!keep.empty()) {
         support::EpochFileSet set;
         set.epoch = ext;
         set.contracts = std::move(keep);
         scan.epochs.push_back(std::move(set));
+    }
+}
+
+// The target a state file name addresses, when it is one (contractNNNN.EEE, spectrum.EEE, universe.EEE).
+std::optional<StateTarget> targetOfFileName(const support::ParsedFileName& parsed) {
+    switch (parsed.kind) {
+    case support::FileNameKind::ContractState: return StateTarget::ofContract(parsed.contractIndex);
+    case support::FileNameKind::Spectrum: return StateTarget::ofLedger(schema::LedgerKind::Spectrum);
+    case support::FileNameKind::Universe: return StateTarget::ofLedger(schema::LedgerKind::Universe);
+    default: return std::nullopt;
     }
 }
 
@@ -173,22 +190,23 @@ std::shared_ptr<Workspace> WorkspaceManager::buildAndInstall(const support::Work
     if (request.epoch && *request.epoch < 0) throw rpc::Error(Code::InvalidParams, "params.epoch must not be negative");
     request.statePath = support::normalizePath(request.statePath);
 
-    // What the state path names: a directory with state files, or one state file.
+    // What the state path names: a directory with state files, or one state / ledger file.
     Workspace::Scope scope = Workspace::Scope::Dir;
     std::string stateDir = request.statePath;
-    std::optional<std::uint32_t> fileIndex;
+    std::optional<StateTarget> fileTarget;
     std::optional<std::uint32_t> fileExt;
     if (!support::isDirectory(request.statePath)) {
         const std::string name = request.statePath.substr(request.statePath.find_last_of("/\\") + 1);
         const support::ParsedFileName parsed = support::parseStateFileName(name);
         const bool exists = support::pathExists(request.statePath);
-        if (parsed.kind != support::FileNameKind::ContractState) {
+        fileTarget = targetOfFileName(parsed);
+        if (!fileTarget) {
             if (!exists) throw rpc::Error(Code::IoError, "the state path '" + request.statePath + "' does not exist");
-            throw rpc::Error(Code::InvalidParams, "'" + request.statePath + "' is neither a directory nor a contract state file (contractNNNN.EEE)");
+            throw rpc::Error(Code::InvalidParams, "'" + request.statePath +
+                                                      "' is neither a directory nor a state file (contractNNNN.EEE, spectrum.EEE, universe.EEE)");
         }
         if (!exists && !fromWatcher) throw rpc::Error(Code::IoError, "the state file '" + request.statePath + "' does not exist");
         scope = Workspace::Scope::File;
-        fileIndex = parsed.contractIndex;
         fileExt = parsed.ext;
         stateDir = support::parentPath(request.statePath).value_or(request.statePath);
     }
@@ -200,7 +218,7 @@ std::shared_ptr<Workspace> WorkspaceManager::buildAndInstall(const support::Work
     std::optional<std::uint32_t> ext;
     std::optional<int> epochForCore;
     if (scope == Workspace::Scope::File) {
-        restrictToFile(scan, *fileIndex, *fileExt);
+        restrictToFile(scan, *fileTarget, *fileExt);
         ext = *fileExt;
         epochForCore = static_cast<int>(*fileExt);
     } else if (request.epoch) {
@@ -229,13 +247,13 @@ std::shared_ptr<Workspace> WorkspaceManager::buildAndInstall(const support::Work
     }
     if (cancelled()) throw rpc::Cancelled();
 
-    std::map<std::uint32_t, std::uint64_t> generations;
+    Workspace::Generations generations;
     if (previous) generations = previous->generations();
     WorkspaceDeps deps;
     deps.cache = cache_;
     deps.identity = identity_;
     deps.watcher = config_->watcher;
-    auto ws = Workspace::create(nextId_.fetch_add(1), std::move(request), std::move(bundle), std::move(scan), scope, ext, fileIndex,
+    auto ws = Workspace::create(nextId_.fetch_add(1), std::move(request), std::move(bundle), std::move(scan), scope, ext, fileTarget,
                                 std::move(deps), generations);
     install(ws, attempt);
     startWatching(ws);
@@ -269,7 +287,7 @@ void WorkspaceManager::processEvents(std::vector<QueuedEvent>& events) {
     std::shared_ptr<Workspace> cur = current();
     if (!cur) return;
     bool needRescan = false;
-    std::set<std::uint32_t> modified;
+    std::set<StateTarget> modified;
     bool reconcile = false;
     for (const QueuedEvent& q : events) {
         if (q.workspaceId != cur->id()) continue;
@@ -278,10 +296,10 @@ void WorkspaceManager::processEvents(std::vector<QueuedEvent>& events) {
             continue;
         }
         const support::ParsedFileName parsed = support::parseStateFileName(q.event.path.substr(q.event.path.find_last_of("/\\") + 1));
-        const bool shownContractFile = parsed.kind == support::FileNameKind::ContractState && cur->epochExt() &&
-                                       parsed.ext == cur->epochExt();
-        if (shownContractFile && q.event.kind == support::WatchEventKind::Modified && !q.event.isDirectory) {
-            modified.insert(parsed.contractIndex);
+        const std::optional<StateTarget> target = targetOfFileName(parsed);
+        const bool shownFile = target && cur->epochExt() && parsed.ext == cur->epochExt();
+        if (shownFile && q.event.kind == support::WatchEventKind::Modified && !q.event.isDirectory) {
+            modified.insert(*target);
         } else {
             needRescan = true;
         }
@@ -291,18 +309,24 @@ void WorkspaceManager::processEvents(std::vector<QueuedEvent>& events) {
         return;
     }
     if (reconcile) {
-        for (std::uint32_t i : cur->indicesWithFiles()) modified.insert(i);
+        for (const StateTarget& t : cur->targetsWithFiles()) modified.insert(t);
     }
     if (modified.empty()) return;
-    Workspace::RefreshOutcome outcome = cur->refreshFiles(std::vector<std::uint32_t>(modified.begin(), modified.end()));
+    Workspace::RefreshOutcome outcome = cur->refreshFiles(std::vector<StateTarget>(modified.begin(), modified.end()));
     if (outcome.missing) {
         rescan(cur);
         return;
     }
-    if (outcome.changed.empty()) return;
+    if (outcome.changed.empty() && outcome.changedLedgers.empty()) return;
     nlohmann::json contracts = nlohmann::json::array();
     for (std::uint32_t i : outcome.changed) contracts.push_back(cur->contractJson(i));
-    emitIfCurrent(cur->id(), "contracts.changed", {{"workspaceId", cur->id()}, {"contracts", std::move(contracts)}});
+    nlohmann::json payload = {{"workspaceId", cur->id()}, {"contracts", std::move(contracts)}};
+    if (!outcome.changedLedgers.empty()) {
+        nlohmann::json ledgers = nlohmann::json::array();
+        for (schema::LedgerKind k : outcome.changedLedgers) ledgers.push_back(cur->ledgerJson(k));
+        payload["ledgers"] = std::move(ledgers);
+    }
+    emitIfCurrent(cur->id(), "contracts.changed", payload);
 }
 
 void WorkspaceManager::workerMain() {

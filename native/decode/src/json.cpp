@@ -166,6 +166,48 @@ void to_json(json& j, const TablePage& v) {
     j["elapsedMs"] = v.elapsedMs;
 }
 
+void to_json(json& j, const LedgerSummary& v) {
+    j = json::object();
+    j["kind"] = schema::ledgerKindName(v.kind);
+    j["capacity"] = v.capacity;
+    j["population"] = v.population;
+    if (v.kind == schema::LedgerKind::Spectrum) {
+        j["nonZeroBalances"] = v.nonZeroBalances;
+        j["totalSupply"] = v.totalSupply;
+        j["maxBalance"] = {{"slot", v.maxSlot}, {"identity", v.maxIdentity}, {"balance", v.maxBalance}};
+    } else {
+        j["issuances"] = v.issuances;
+        j["ownerships"] = v.ownerships;
+        j["possessions"] = v.possessions;
+        json assets = json::array();
+        for (const LedgerSummary::Asset& a : v.assets) {
+            assets.push_back({{"slot", a.slot},
+                              {"issuer", a.issuer},
+                              {"name", a.name},
+                              {"numberOfDecimalPlaces", a.numberOfDecimalPlaces},
+                              {"unitOfMeasurement", a.unitOfMeasurement},
+                              {"ownerships", a.ownerships},
+                              {"possessions", a.possessions},
+                              {"totalShares", a.totalShares}});
+        }
+        j["assets"] = std::move(assets);
+    }
+    j["elapsedMs"] = v.elapsedMs;
+}
+
+void to_json(json& j, const LedgerLookup& v) {
+    j = json::object();
+    j["identity"] = v.identity;
+    json hits = json::array();
+    for (const LedgerLookupHit& h : v.hits) {
+        json hit = {{"slot", h.slot}, {"id", h.id}, {"preview", h.preview}};
+        if (h.type) hit["type"] = *h.type;
+        hits.push_back(std::move(hit));
+    }
+    j["hits"] = std::move(hits);
+    j["probes"] = v.probes;
+}
+
 void from_json(const json& j, FilterSpec& v) {
     v.column = j.at("column").get<std::string>();
     v.op = j.at("op").get<std::string>();

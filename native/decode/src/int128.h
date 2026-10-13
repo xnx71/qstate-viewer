@@ -145,9 +145,17 @@ struct i128 {
         r.hi = static_cast<std::int64_t>(~static_cast<std::uint64_t>(a.hi) + (a.lo == 0 ? 1 : 0));
         return r;
     }
+    // Two's complement addition / subtraction (wraps modulo 2^128 like __int128).
+    friend constexpr i128 operator+(const i128& a, const i128& b);
+    friend constexpr i128 operator-(const i128& a, const i128& b);
+    constexpr i128& operator+=(const i128& o) { return *this = *this + o; }
+    constexpr i128& operator-=(const i128& o) { return *this = *this - o; }
 };
 
 constexpr u128::u128(const i128& v) : lo(v.lo), hi(static_cast<std::uint64_t>(v.hi)) {}
+
+constexpr i128 operator+(const i128& a, const i128& b) { return i128(u128(a) + u128(b)); }
+constexpr i128 operator-(const i128& a, const i128& b) { return i128(u128(a) - u128(b)); }
 
 } // namespace portable
 

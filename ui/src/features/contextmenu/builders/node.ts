@@ -12,6 +12,7 @@ import {
   FoldVerticalIcon,
   HashIcon,
   ListOrderedIcon,
+  ScanSearchIcon,
   ListTreeIcon,
   LocateFixedIcon,
   PanelRightIcon,
@@ -24,14 +25,15 @@ import {
 } from "lucide-react";
 import { fmtHexOffset, groupDigits, leafText } from "@/lib/format";
 import { formatPath } from "@/lib/nodePath";
-import type { CellValue, NodeId, NodeInfo } from "@/rpc/contract";
+import type { CellValue, NodeId, NodeInfo, StateTarget } from "@/rpc/contract";
+import { ledgerLabel } from "@/lib/target";
 import { realDeps, type MenuDeps } from "../deps";
 import { item, sections, SEP, sub, unless, type MenuEntry } from "../types";
 
 /** What a feature knows about the node under the pointer. Everything but contract / id / label is optional. */
 export interface NodeTarget {
   source: "tree" | "table" | "search";
-  contract: number;
+  contract: StateTarget;
   id: NodeId;
   label: string;
   /** Labels root -> node (for "Copy path"). */
@@ -75,7 +77,7 @@ export function findQuery(v: CellValue | undefined): { query: string; mode: "id"
 }
 
 /** Value specific copy / find items (the top section of the menu). */
-export function valueItems(v: CellValue | undefined, deps: MenuDeps, copyLabel = "Copy value"): MenuEntry[] {
+export function valueItems(v: CellValue | undefined, deps: MenuDeps, copyLabel = "Copy value", opts: { lookupSubmenu?: boolean } = {}): MenuEntry[] {
   if (!v) return [];
   const out: MenuEntry[] = [];
   const unavailable = v.k === "unavailable" ? "beyond the end of the file" : null;
@@ -107,6 +109,22 @@ export function valueItems(v: CellValue | undefined, deps: MenuDeps, copyLabel =
   }
   const f = findQuery(v);
   if (f) out.push(item("find-value", `Find this ${f.label}`, () => deps.find(f.query, f.mode), { icon: SearchIcon }));
+  const lookups = lookupItems(v, deps);
+  if (lookups.length) {
+    if (opts.lookupSubmenu) out.push(sub("lookup", "Look up in ledger", lookups, { icon: ScanSearchIcon }));
+    else out.push(...lookups);
+  }
+  return out;
+}
+
+/** "Look up in spectrum / universe" for identity values: the ledgers answer by hash lookup (instant), from anywhere. */
+export function lookupItems(v: CellValue | undefined, deps: MenuDeps): MenuEntry[] {
+  if (v?.k !== "id" || v.zero) return [];
+  const out: MenuEntry[] = [];
+  for (const l of deps.ledgers()) {
+    const readable = l.status === "ok" || l.status === "size-mismatch";
+    out.push(item(`lookup-${l.kind}`, `Look up in ${ledgerLabel(l.kind).toLowerCase()}`, () => deps.lookupInLedger(l.kind, v.identity), { icon: ScanSearchIcon, ...unless(readable ? null : "no ledger file") }));
+  }
   return out;
 }
 

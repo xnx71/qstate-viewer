@@ -16,8 +16,9 @@ version selection, threading and event semantics). `Service::registerAll` still 
 for any contract method that no group provides (a safety net when contract.ts grows).
 
 Method groups: `app_methods.cpp`, `settings_methods.cpp`, `fs_methods.cpp`, `core_methods.cpp`, `workspace_methods.cpp`,
-`state_methods.cpp`; shared machinery: `core_loader.cpp`, `workspace.cpp`, `workspace_manager.cpp`.
-Handlers reach the shared state (settings store, workspace manager) through `ctx.state`.
+`state_methods.cpp`, `ledger_methods.cpp`; shared machinery: `core_loader.cpp`, `workspace.cpp`, `workspace_manager.cpp`,
+`state_target.h` (the `contract: StateTarget` parameter: a contract index or `"spectrum"` / `"universe"`, and the
+decode -> rpc error mapping). Handlers reach the shared state (settings store, workspace manager) through `ctx.state`.
 
 ## Extension recipe: add a method group
 

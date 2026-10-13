@@ -15,7 +15,7 @@ import { appInfoAtom, coreProgressAtom, openDialogAtom, openPhaseAtom, settingsA
 import { CoreSourcePanel } from "./CoreSourcePanel";
 import { formFromRequest, missingPart, type OpenForm, requestFromForm, type StateSelection } from "./form";
 import { useRepoSync } from "./hooks";
-import { baseName, parentPath, parseStateFileName, type Sep, shortenPath } from "./paths";
+import { baseName, parentPath, parseOpenableFileName, type Sep, shortenPath } from "./paths";
 import { inferMode, repoShortName } from "./refs";
 import { StatePanel } from "./StatePanel";
 
@@ -90,7 +90,7 @@ function DialogBody({ onClose, canClose }: { onClose: () => void; canClose: bool
   };
 
   const recentDirs = useMemo(() => {
-    const dirs = recents.map((r) => (parseStateFileName(baseName(r.statePath)) ? (parentPath(r.statePath, sep) ?? r.statePath) : r.statePath));
+    const dirs = recents.map((r) => (parseOpenableFileName(baseName(r.statePath)) ? (parentPath(r.statePath, sep) ?? r.statePath) : r.statePath));
     return [...new Set(dirs)];
   }, [recents, sep]);
 
@@ -108,7 +108,7 @@ function DialogBody({ onClose, canClose }: { onClose: () => void; canClose: bool
         <div className="min-w-0 flex-1">
           <DialogTitle className="text-base">{ws ? "Open workspace" : "Welcome to qstate-viewer"}</DialogTitle>
           <DialogDescription className="truncate text-meta">
-            A <b>core source</b> (git: its C++ headers define the contract layouts) plus <b>state files</b> (<code className="font-mono">contractNNNN.EEE</code>).
+            A <b>core source</b> (git: its C++ headers define the layouts) plus <b>state files</b> (<code className="font-mono">contractNNNN.EEE</code>, <code className="font-mono">spectrum.EEE</code>, <code className="font-mono">universe.EEE</code>).
           </DialogDescription>
         </div>
         <RecentMenu recents={recents} onPick={useRecent} />

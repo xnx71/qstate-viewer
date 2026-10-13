@@ -1,2 +1,9 @@
 #include "qstate/schema/model.h"
-// Header-only model; this translation unit keeps the library target non-empty and checks the header compiles.
+
+namespace qstate::schema {
+
+const char* ledgerKindName(LedgerKind kind) {
+    return kind == LedgerKind::Spectrum ? "spectrum" : "universe";
+}
+
+} // namespace qstate::schema

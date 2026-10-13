@@ -19,6 +19,8 @@ void to_json(nlohmann::json& j, const TableColumn& v);
 void to_json(nlohmann::json& j, const TableInfo& v);
 void to_json(nlohmann::json& j, const TableRow& v);
 void to_json(nlohmann::json& j, const TablePage& v);
+void to_json(nlohmann::json& j, const LedgerSummary& v); // SpectrumSummary | UniverseSummary by v.kind
+void to_json(nlohmann::json& j, const LedgerLookup& v);
 
 // Params: { column, op, value? } / { column, desc? } / TableQuery (contract field of TableQuery is ignored here).
 void from_json(const nlohmann::json& j, FilterSpec& v);

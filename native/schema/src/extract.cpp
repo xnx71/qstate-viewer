@@ -240,13 +240,155 @@ std::vector<TableRow> readTable(qstate::cpp::Program& program, const std::string
     return rows;
 }
 
+// ---- ledger files -------------------------------------------------------------------------------------------------
+
+// The translation unit is rooted at this virtual file instead of contract_def.h directly: it includes the real root
+// and then binds the capacity MACROS of the ledger tables (SPECTRUM_CAPACITY / ASSETS_CAPACITY, which preprocessing
+// would otherwise expand away) to constexpr variables the constant evaluator can read.
+constexpr const char* kOverlayRoot = "qstate-ledger-root.h";
+constexpr const char* kSpectrumCapacityVar = "qstate_spectrumCapacity";
+constexpr const char* kAssetsCapacityVar = "qstate_assetsCapacity";
+
+class OverlaySource final : public qstate::cpp::SourceProvider {
+public:
+    OverlaySource(const qstate::cpp::SourceProvider& base, std::string rootFile) : base_(base) {
+        overlay_ = "#include \"" + rootFile + "\"\n"
+                   "#ifdef SPECTRUM_CAPACITY\n"
+                   "constexpr unsigned long long " + std::string(kSpectrumCapacityVar) + " = SPECTRUM_CAPACITY;\n"
+                   "#endif\n"
+                   "#ifdef ASSETS_CAPACITY\n"
+                   "constexpr unsigned long long " + std::string(kAssetsCapacityVar) + " = ASSETS_CAPACITY;\n"
+                   "#endif\n";
+    }
+    std::optional<std::string> read(std::string_view path) const override {
+        if (path == kOverlayRoot) return overlay_;
+        return base_.read(path);
+    }
+    bool exists(std::string_view path) const override { return path == kOverlayRoot || base_.exists(path); }
+
+private:
+    const qstate::cpp::SourceProvider& base_;
+    std::string overlay_;
+};
+
+struct LedgerSpec {
+    LedgerKind kind;
+    const char* recordType;
+    const char* capacityVar;   // overlay variable bound to the capacity macro
+    const char* capacityMacro; // for messages
+    const char* sizeVar;       // fallback: `<...>SizeInBytes` of src/common_buffers.h when it is in the unit
+};
+
+constexpr LedgerSpec kLedgers[] = {
+    {LedgerKind::Spectrum, "EntityRecord", kSpectrumCapacityVar, "SPECTRUM_CAPACITY", "spectrumSizeInBytes"},
+    {LedgerKind::Universe, "AssetRecord", kAssetsCapacityVar, "ASSETS_CAPACITY", "universeSizeInBytes"},
+};
+
+std::optional<std::uint64_t> evalU64Variable(qstate::cpp::Program& program, const char* name) {
+    auto var = program.lookupVariable(name);
+    if (!var || !var->hasInitializer) return std::nullopt;
+    auto init = program.evalInitializer(*var);
+    if (!init || init->kind != qstate::cpp::InitValue::Kind::Int) return std::nullopt;
+    return static_cast<std::uint64_t>(init->i);
+}
+
+// Anonymous records reachable through named members get display names after their member path
+// ("AssetRecord::varStruct", "AssetRecord::varStruct::issuance") instead of "<anonymous>".
+void nameAnonymousMembers(Schema& schema, TypeId owner, int depth = 0) {
+    if (depth > 8 || owner >= schema.types.size()) return;
+    const std::string ownerName = schema.types[owner].name;
+    for (std::size_t i = 0; i < schema.types[owner].fields.size(); ++i) {
+        const Field& f = schema.types[owner].fields[i];
+        if (f.type >= schema.types.size()) continue;
+        Type& ft = schema.types[f.type];
+        if (ft.kind != TypeKind::Record || ft.name.find("anonymous") == std::string::npos) continue;
+        ft.name = ownerName + "::" + f.name;
+        schema.types[owner].fields[i].typeName = ft.name;
+        nameAnonymousMembers(schema, f.type, depth + 1);
+    }
+}
+
+void extractLedgers(qstate::cpp::Program& program, Converter& conv, Schema& schema) {
+    for (const LedgerSpec& spec : kLedgers) {
+        LedgerSchema l;
+        l.kind = spec.kind;
+        l.recordTypeName = spec.recordType;
+        const qstate::cpp::TypeId cppType = program.lookupType(spec.recordType);
+        if (cppType == qstate::cpp::kNoType) {
+            l.error = std::string("type ") + spec.recordType + " not found in the translation unit";
+        } else {
+            const qstate::cpp::TypeLayout& layout = program.layoutOf(cppType);
+            if (!layout.complete) {
+                l.error = std::string("layout of ") + spec.recordType + " failed: " + layout.error;
+            } else {
+                l.recordType = conv.convert(cppType);
+                l.recordSize = layout.size;
+                if (layout.loc.line != 0) l.headerFile = program.fileName(layout.loc.file);
+                Type& rec = schema.types[l.recordType];
+                if (rec.role.kind == RoleKind::None)
+                    rec.role.kind = spec.kind == LedgerKind::Spectrum ? RoleKind::EntityRecord : RoleKind::AssetRecord;
+                nameAnonymousMembers(schema, l.recordType);
+            }
+        }
+        if (l.error.empty()) {
+            std::optional<std::uint64_t> capacity = evalU64Variable(program, spec.capacityVar);
+            const std::optional<std::uint64_t> sizeInBytes = evalU64Variable(program, spec.sizeVar);
+            if (!capacity && sizeInBytes && l.recordSize) capacity = *sizeInBytes / l.recordSize;
+            if (!capacity || *capacity == 0) {
+                l.error = std::string("the capacity macro ") + spec.capacityMacro + " is not defined in the translation unit";
+            } else if (*capacity > (std::uint64_t{1} << 40) / std::max<std::uint64_t>(1, l.recordSize)) {
+                l.error = std::string(spec.capacityMacro) + " = " + std::to_string(*capacity) + " is implausibly large";
+            } else {
+                l.capacity = *capacity;
+                l.expectedSize = l.capacity * l.recordSize;
+                if (sizeInBytes && *sizeInBytes != l.expectedSize) {
+                    schema.diags.push_back({Diag::Severity::Warning,
+                                            std::string(spec.sizeVar) + " = " + std::to_string(*sizeInBytes) + " differs from " +
+                                                spec.capacityMacro + " * sizeof(" + spec.recordType + ") = " +
+                                                std::to_string(l.expectedSize),
+                                            {}, 0});
+                }
+                // Synthetic root type of the ledger's state tree: recordType[capacity].
+                const Type& rec = schema.types[l.recordType];
+                Type root;
+                root.id = static_cast<TypeId>(schema.types.size());
+                root.name = rec.name + "[" + std::to_string(l.capacity) + "]";
+                root.kind = TypeKind::Array;
+                root.size = l.expectedSize;
+                root.align = rec.align;
+                root.element = l.recordType;
+                root.count = l.capacity;
+                root.role.kind = spec.kind == LedgerKind::Spectrum ? RoleKind::SpectrumTable : RoleKind::UniverseTable;
+                root.role.element = l.recordType;
+                root.role.capacity = l.capacity;
+                root.source = rec.source;
+                l.rootType = root.id;
+                schema.types.push_back(std::move(root));
+            }
+        }
+        if (!l.error.empty()) {
+            schema.diags.push_back({Diag::Severity::Warning,
+                                    std::string("ledger ") + ledgerKindName(spec.kind) + " cannot be decoded with this core version: " + l.error,
+                                    l.headerFile, 0});
+        }
+        schema.ledgers.push_back(std::move(l));
+    }
+}
+
 } // namespace
 
-ExtractResult extractSchema(const qstate::cpp::SourceProvider& source, const ExtractOptions& options) {
+ExtractResult extractSchema(const qstate::cpp::SourceProvider& baseSource, const ExtractOptions& options) {
     const auto t0 = Clock::now();
     ExtractResult result;
     result.schema = std::make_shared<Schema>();
     Schema& schema = *result.schema;
+
+    if (!baseSource.exists(options.rootFile)) {
+        schema.diags.push_back({Diag::Severity::Error, "cannot read " + options.rootFile, options.rootFile, 0});
+        result.stats.totalMs = msSince(t0);
+        return result;
+    }
+    const OverlaySource source(baseSource, options.rootFile);
 
     qstate::cpp::PreprocessOptions po;
     po.includeDirs = options.includeDirs;
@@ -254,14 +396,15 @@ ExtractResult extractSchema(const qstate::cpp::SourceProvider& source, const Ext
     qstate::cpp::Preprocessor pp(source, po);
 
     auto tp = Clock::now();
-    qstate::cpp::PreprocessResult pre = pp.run(options.rootFile);
+    qstate::cpp::PreprocessResult pre = pp.run(kOverlayRoot);
     result.stats.preprocessMs = msSince(tp);
-    result.stats.fileCount = pre.files.size();
     result.stats.tokenCount = pre.tokens.size();
-    result.files = pre.files;
+    for (const std::string& f : pre.files)
+        if (f != kOverlayRoot) result.files.push_back(f);
+    result.stats.fileCount = result.files.size();
     for (const Diag& d : pre.diags) schema.diags.push_back(d);
 
-    if (pre.files.empty() || pre.aborted) {
+    if (result.files.empty() || pre.aborted) {
         schema.diags.push_back({Diag::Severity::Error, "cannot read " + options.rootFile, options.rootFile, 0});
         result.stats.totalMs = msSince(t0);
         return result;
@@ -316,6 +459,7 @@ ExtractResult extractSchema(const qstate::cpp::SourceProvider& source, const Ext
         }
         schema.contracts.push_back(std::move(c));
     }
+    extractLedgers(*program, conv, schema);
     for (const Diag& d : program->diags()) {
         // Parse diagnostics were already copied; only add late ones created by the layout queries.
         bool known = false;

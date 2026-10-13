@@ -197,4 +197,45 @@ struct TablePage {
     double elapsedMs = 0;
 };
 
+// ---- ledgers (spectrum.EEE / universe.EEE) ---------------------------------------------------------------------------
+
+// contract.ts SpectrumSummary / UniverseSummary (the members of the other kind are unused).
+struct LedgerSummary {
+    schema::LedgerKind kind = schema::LedgerKind::Spectrum;
+    std::uint64_t capacity = 0;
+    std::uint64_t population = 0;
+    double elapsedMs = 0;
+    // spectrum
+    std::uint64_t nonZeroBalances = 0;
+    std::string totalSupply;        // decimal (sum of incomingAmount - outgoingAmount over the live records)
+    std::uint64_t maxSlot = 0;
+    std::string maxIdentity;
+    std::string maxBalance;         // decimal
+    // universe
+    std::uint64_t issuances = 0, ownerships = 0, possessions = 0;
+    struct Asset {
+        std::uint64_t slot = 0;
+        std::string issuer;         // identity
+        std::string name;
+        int numberOfDecimalPlaces = 0;
+        std::string unitOfMeasurement; // 7 bytes, hex
+        std::uint64_t ownerships = 0, possessions = 0;
+        std::string totalShares;    // decimal
+    };
+    std::vector<Asset> assets;      // issuances in slot order
+};
+
+struct LedgerLookupHit {
+    std::uint64_t slot = 0;
+    NodeId id;                      // "i:<slot>"
+    std::optional<unsigned> type;   // universe: 1 issuance, 2 ownership, 3 possession
+    std::string preview;
+};
+
+struct LedgerLookup {
+    std::string identity;           // canonical 60-letter text of the key that was looked up
+    std::vector<LedgerLookupHit> hits;
+    std::uint64_t probes = 0;
+};
+
 } // namespace qstate::decode

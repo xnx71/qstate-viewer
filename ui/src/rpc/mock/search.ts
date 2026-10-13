@@ -13,6 +13,7 @@ import type { NodeLocation, SearchMatch, SearchResult } from '../contract';
 import type { TNode } from './types';
 import type { StateSource } from './tree';
 import { locate, readRaw } from './tree';
+import type { DecodeEnv } from './decode';
 import { contractIndexOfId, decodeIdentity } from './ids';
 import { bytesToHex, hexToBytes, now, rpcError } from './util';
 import type { GenSpec } from './gens';
@@ -32,7 +33,7 @@ interface Pattern {
   note: string;
 }
 
-export function interpretQuery(query: string, mode: SearchMode, src: StateSource): Pattern {
+export function interpretQuery(query: string, mode: SearchMode, env: DecodeEnv): Pattern {
   const q = query.trim();
   if (q === '') throw rpcError('invalid_params', 'Empty search query');
   let m: SearchMode = mode;
@@ -50,7 +51,7 @@ export function interpretQuery(query: string, mode: SearchMode, src: StateSource
       let note = 'Interpreted as a Qubic identity: 32 bytes as stored';
       if (!d.checksumOk) note += ' (checksum letters do not match; searched anyway)';
       const ci = contractIndexOfId(d.bytes, 0);
-      if (ci > 0) note += `; this is the id of contract ${ci}${src.env.contractName(ci) ? ' (' + src.env.contractName(ci) + ')' : ''}`;
+      if (ci > 0) note += `; this is the id of contract ${ci}${env.contractName(ci) ? ' (' + env.contractName(ci) + ')' : ''}`;
       return { mode: 'id', bytes: d.bytes, note };
     }
     case 'hex': {
@@ -130,7 +131,7 @@ function anchorIndex(p: Uint8Array): number {
 
 export function runSearch(src: StateSource, query: string, mode: SearchMode, limit: number, schemaLess = false): SearchResult {
   const t0 = now();
-  const pat = interpretQuery(query, mode, src);
+  const pat = interpretQuery(query, mode, src.env);
   const p = pat.bytes;
   const plen = p.length;
   const a = anchorIndex(p);

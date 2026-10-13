@@ -2,7 +2,8 @@
 import { atom } from "jotai";
 import { atomFamily } from "jotai-family";
 import { invoke } from "@/rpc/client";
-import type { NodeId, NodeReveal } from "@/rpc/contract";
+import type { NodeId, NodeReveal, StateTarget } from "@/rpc/contract";
+import { rootLabel } from "@/lib/target";
 import { fetchChildren } from "./data";
 import { selectedByteAtom } from "./hex";
 import { prefsAtom } from "./prefs";
@@ -47,15 +48,15 @@ export interface TreeState {
   ready: boolean;
 }
 
-const ROOT_SELECTION: Selection = { id: "", path: [{ id: "", label: "state" }] };
-
-function freshState(): TreeState {
-  return { root: makeNode("", 0, "state"), selected: ROOT_SELECTION, scroll: null, ready: false };
+function freshState(target: StateTarget): TreeState {
+  const label = rootLabel(target);
+  return { root: makeNode("", 0, label), selected: { id: "", path: [{ id: "", label }] }, scroll: null, ready: false };
 }
 
-export const treeAtomFamily = atomFamily((_contract: number) => atom<TreeState>(freshState()));
+/** Tree state per target (contract index or ledger kind). */
+export const treeAtomFamily = atomFamily((target: StateTarget) => atom<TreeState>(freshState(target)));
 
-function update(contract: number, fn: (s: TreeState) => TreeState): void {
+function update(contract: StateTarget, fn: (s: TreeState) => TreeState): void {
   const a = treeAtomFamily(contract);
   store.set(a, fn(store.get(a)));
 }
@@ -63,7 +64,7 @@ function update(contract: number, fn: (s: TreeState) => TreeState): void {
 const hideEmpty = () => store.get(prefsAtom).hideEmpty;
 
 /** (Re)load the root: total children of the root. */
-export async function initTree(contract: number): Promise<void> {
+export async function initTree(contract: StateTarget): Promise<void> {
   try {
     const page = await fetchChildren(contract, "", "logical", hideEmpty(), 0);
     update(contract, (s) => ({ ...s, root: { ...setTotal(s.root, [], page.total) }, ready: true }));
@@ -72,12 +73,12 @@ export async function initTree(contract: number): Promise<void> {
   }
 }
 
-export function resetTreeState(contract: number): void {
-  store.set(treeAtomFamily(contract), freshState());
+export function resetTreeState(contract: StateTarget): void {
+  store.set(treeAtomFamily(contract), freshState(contract));
 }
 
 /** Expand or collapse the row. `label`/`id` describe the row's node. */
-export function toggleRow(contract: number, ref: RowRef, node: { id: NodeId; label: string; childCount: number }): void {
+export function toggleRow(contract: StateTarget, ref: RowRef, node: { id: NodeId; label: string; childCount: number }): void {
   if (ref.parent === null) return; // root is always expanded
   if (ref.node) {
     update(contract, (s) => ({ ...s, root: collapseChild(s.root, ref.parentPath, ref.index) }));
@@ -90,7 +91,7 @@ export function toggleRow(contract: number, ref: RowRef, node: { id: NodeId; lab
 }
 
 /** Fetch page 0 of the node at `path` and record its child total. */
-export async function loadTotal(contract: number, path: number[]): Promise<void> {
+export async function loadTotal(contract: StateTarget, path: number[]): Promise<void> {
   const st = store.get(treeAtomFamily(contract));
   const n = nodeAtPath(st.root, path);
   if (!n) return;
@@ -112,16 +113,16 @@ function collapseChildAt(root: TNode, path: number[]): TNode {
   return collapseChild(root, path.slice(0, -1), path[path.length - 1]);
 }
 
-export function selectNode(contract: number, sel: Selection | null): void {
+export function selectNode(contract: StateTarget, sel: Selection | null): void {
   store.set(selectedByteAtom, null);
   update(contract, (s) => ({ ...s, selected: sel }));
 }
 
-export function requestScroll(contract: number, row: number): void {
+export function requestScroll(contract: StateTarget, row: number): void {
   update(contract, (s) => ({ ...s, scroll: { row, nonce: (s.scroll?.nonce ?? 0) + 1 } }));
 }
 
-export function collapseAllNodes(contract: number): void {
+export function collapseAllNodes(contract: StateTarget): void {
   update(contract, (s) => ({ ...s, root: { ...s.root, kids: [] } }));
 }
 
@@ -129,7 +130,7 @@ export function collapseAllNodes(contract: number): void {
  * Expand the (expanded) node at `path` one level: every child that has children of its own gets expanded, at most
  * `limit` of them (the first page of the node's children is what is inspected, so the cost is bounded).
  */
-export async function expandChildrenOneLevel(contract: number, path: number[], limit = 40): Promise<void> {
+export async function expandChildrenOneLevel(contract: StateTarget, path: number[], limit = 40): Promise<void> {
   const node = nodeAtPath(store.get(treeAtomFamily(contract)).root, path);
   if (!node) return;
   try {
@@ -147,12 +148,12 @@ export async function expandChildrenOneLevel(contract: number, path: number[], l
 }
 
 /** Collapse every expanded child of the node at `path` (the node itself stays expanded). */
-export function collapseChildren(contract: number, path: number[]): void {
+export function collapseChildren(contract: StateTarget, path: number[]): void {
   update(contract, (s) => ({ ...s, root: updateAtPath(s.root, path, (n) => (n.kids.length ? { ...n, kids: [] } : n)) }));
 }
 
 /** After a live update: refresh the totals of all expanded nodes (cheap: one request per expanded node). */
-export function refreshTree(contract: number): void {
+export function refreshTree(contract: StateTarget): void {
   const st = store.get(treeAtomFamily(contract));
   const walk = (n: TNode, path: number[]) => {
     void loadTotal(contract, path);
@@ -162,7 +163,7 @@ export function refreshTree(contract: number): void {
 }
 
 /** Hide-empty changed: the child sequence changes, so everything below the root is reset. */
-export function resetForHideEmpty(contract: number): void {
+export function resetForHideEmpty(contract: StateTarget): void {
   update(contract, (s) => ({ ...s, root: { ...s.root, kids: [], total: undefined } }));
   void initTree(contract);
 }
@@ -177,7 +178,7 @@ function selectionOf(rv: NodeReveal): Selection {
 }
 
 /** Exact tree path of a target (one `state.reveal` call). Shows an error toast and returns null on failure. */
-export async function fetchReveal(contract: number, target: RevealTarget): Promise<NodeReveal | null> {
+export async function fetchReveal(contract: StateTarget, target: RevealTarget): Promise<NodeReveal | null> {
   try {
     return await invoke("state.reveal", { contract, ...target, hideEmpty: hideEmpty() || undefined });
   } catch (e) {
@@ -191,7 +192,7 @@ export async function fetchReveal(contract: number, target: RevealTarget): Promi
  * one request plus the pages the virtualizer fetches for the visible rows, wherever the node sits in a huge container.
  * Returns the child-index path, or null when the node cannot be shown in the tree (it is still selected).
  */
-export async function revealNode(contract: number, target: RevealTarget): Promise<number[] | null> {
+export async function revealNode(contract: StateTarget, target: RevealTarget): Promise<number[] | null> {
   store.set(selectedByteAtom, null);
   const st0 = store.get(treeAtomFamily(contract));
   if (!st0.ready) await initTree(contract);
@@ -226,7 +227,7 @@ export { rowIndexOfPath, updateAtPath };
  * Switch the selected container between logical and raw children (expands it in the tree if needed).
  * Returns false when the node cannot be shown in the tree.
  */
-export async function setSelectedView(contract: number, view: TreeView): Promise<boolean> {
+export async function setSelectedView(contract: StateTarget, view: TreeView): Promise<boolean> {
   const st = store.get(treeAtomFamily(contract));
   const sel = st.selected;
   if (!sel) return false;

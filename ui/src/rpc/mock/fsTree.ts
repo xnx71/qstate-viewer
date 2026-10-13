@@ -5,7 +5,8 @@ import type { FsEntry, FsListing, PathHints } from '../contract';
 import type { World } from './contracts';
 import { makeRng } from './prng';
 import type { Rng } from './prng';
-import { STATE_EPOCHS, STATE_FILE_RE, stateFileMtime, stateFileName, stateFileSize, stateIndices, otherFilesOf } from './statePlan';
+import { LEDGER_FILE_RE, STATE_EPOCHS, STATE_FILE_RE, stateFileMtime, stateFileName, stateFileSize, stateIndices, otherFilesOf } from './statePlan';
+import type { LedgerKind } from './statePlan';
 import { rpcError } from './util';
 
 export const HOME = '/home/mock';
@@ -237,6 +238,8 @@ export class MockFs {
         e.size = c.size;
         const m = STATE_FILE_RE.exec(c.name);
         if (m) e.state = { index: Number(m[1]), epoch: Number(m[2]) };
+        const l = LEDGER_FILE_RE.exec(c.name);
+        if (l) e.ledger = { kind: l[1] as LedgerKind, epoch: Number(l[2]) };
       }
       entries.push(e);
     }

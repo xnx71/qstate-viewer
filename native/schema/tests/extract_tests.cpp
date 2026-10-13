@@ -62,6 +62,143 @@ TEST_CASE("extract: tiny synthetic core") {
     CHECK(arr.role.element != schema::kNoType);
 }
 
+namespace {
+
+// The ledger record types of the core plus the capacity macros, as a tiny synthetic core.
+const char* kLedgerCore = R"(
+        #define SPECTRUM_DEPTH 6
+        #define SPECTRUM_CAPACITY (1ULL << SPECTRUM_DEPTH)
+        #define ASSETS_CAPACITY 0x40ULL
+        struct m256i { unsigned long long u64[4]; };
+        struct EntityRecord {
+            m256i publicKey;
+            long long incomingAmount, outgoingAmount;
+            unsigned int numberOfIncomingTransfers, numberOfOutgoingTransfers;
+            unsigned int latestIncomingTransferTick, latestOutgoingTransferTick;
+        };
+        struct AssetRecord {
+            union {
+                struct { m256i publicKey; unsigned char type; char name[7]; char numberOfDecimalPlaces; char unitOfMeasurement[7]; } issuance;
+                static_assert(sizeof(issuance) == 48, "size");
+                struct { m256i publicKey; unsigned char type; char padding[1]; unsigned short managingContractIndex; unsigned int issuanceIndex; long long numberOfShares; } ownership;
+                struct { m256i publicKey; unsigned char type; char padding[1]; unsigned short managingContractIndex; unsigned int ownershipIndex; long long numberOfShares; } possession;
+            } varStruct;
+        };
+        struct Contract0State { long long reserves[2]; };
+        constexpr struct ContractDescription {
+            char assetName[8];
+            unsigned short constructionEpoch, destructionEpoch;
+            unsigned long long stateSize;
+        } contractDescriptions[] = {
+            {"", 0, 0, sizeof(Contract0State)},
+        };
+    )";
+
+void checkLedgers(const schema::Schema& s, std::uint64_t capacity) {
+    REQUIRE(s.ledgers.size() == 2);
+    const schema::LedgerSchema* sp = s.ledger(schema::LedgerKind::Spectrum);
+    const schema::LedgerSchema* un = s.ledger(schema::LedgerKind::Universe);
+    REQUIRE(sp);
+    REQUIRE(un);
+    INFO("spectrum: " << sp->error << " universe: " << un->error);
+    CHECK(sp->error.empty());
+    CHECK(un->error.empty());
+    CHECK(sp->recordTypeName == "EntityRecord");
+    CHECK(un->recordTypeName == "AssetRecord");
+    CHECK(sp->recordSize == 64);
+    CHECK(un->recordSize == 48);
+    CHECK(sp->capacity == capacity);
+    CHECK(un->capacity == capacity);
+    CHECK(sp->expectedSize == capacity * 64);
+    CHECK(un->expectedSize == capacity * 48);
+    REQUIRE(sp->recordType != schema::kNoType);
+    REQUIRE(un->recordType != schema::kNoType);
+    REQUIRE(sp->rootType != schema::kNoType);
+    REQUIRE(un->rootType != schema::kNoType);
+    const schema::Type& er = s.type(sp->recordType);
+    CHECK(er.role.kind == schema::RoleKind::EntityRecord);
+    REQUIRE(er.fields.size() == 7);
+    CHECK(er.fields[0].name == "publicKey");
+    CHECK(s.type(er.fields[0].type).role.kind == schema::RoleKind::Id);
+    CHECK(er.fields[2].name == "outgoingAmount");
+    CHECK(er.fields[2].offset == 40);
+    const schema::Type& ar = s.type(un->recordType);
+    CHECK(ar.role.kind == schema::RoleKind::AssetRecord);
+    REQUIRE(ar.fields.size() == 1);
+    CHECK(ar.fields[0].name == "varStruct");
+    const schema::Type& un2 = s.type(ar.fields[0].type);
+    CHECK(un2.recordKind == schema::RecordKind::Union);
+    CHECK(un2.name == "AssetRecord::varStruct");
+    REQUIRE(un2.fields.size() == 3);
+    CHECK(un2.fields[0].name == "issuance");
+    CHECK(un2.fields[1].name == "ownership");
+    CHECK(un2.fields[2].name == "possession");
+    CHECK(s.type(un2.fields[1].type).name == "AssetRecord::varStruct::ownership");
+    const schema::Type& own = s.type(un2.fields[1].type);
+    REQUIRE(own.fields.size() == 6);
+    CHECK(own.fields[1].name == "type");
+    CHECK(own.fields[1].offset == 32);
+    CHECK(own.fields[3].name == "managingContractIndex");
+    CHECK(own.fields[3].offset == 34);
+    CHECK(own.fields[4].name == "issuanceIndex");
+    CHECK(own.fields[4].offset == 36);
+    CHECK(own.fields[5].name == "numberOfShares");
+    CHECK(own.fields[5].offset == 40);
+    const schema::Type& root = s.type(sp->rootType);
+    CHECK(root.kind == schema::TypeKind::Array);
+    CHECK(root.element == sp->recordType);
+    CHECK(root.count == capacity);
+    CHECK(root.size == sp->expectedSize);
+    CHECK(root.role.kind == schema::RoleKind::SpectrumTable);
+    CHECK(s.type(un->rootType).role.kind == schema::RoleKind::UniverseTable);
+    CHECK(root.name == "EntityRecord[" + std::to_string(capacity) + "]");
+}
+
+} // namespace
+
+TEST_CASE("extract: ledger record types and capacities from a tiny synthetic core") {
+    cpp::MapSource src;
+    src.add("src/contract_core/contract_def.h", kLedgerCore);
+    schema::ExtractResult r = schema::extractSchema(src);
+    REQUIRE(r.schema);
+    printErrors(*r.schema);
+    CHECK_FALSE(hasErrors(*r.schema));
+    REQUIRE(r.schema->contracts.size() == 1);
+    checkLedgers(*r.schema, 64);
+    // the overlay root is not reported as a source file
+    CHECK(r.files == std::vector<std::string>{"src/contract_core/contract_def.h"});
+    CHECK(r.stats.fileCount == 1);
+}
+
+TEST_CASE("extract: a core without the ledger types keeps its contracts and reports the ledgers as errors") {
+    cpp::MapSource src;
+    src.add("src/contract_core/contract_def.h", R"(
+        struct Contract0State { long long reserves[2]; };
+        constexpr struct ContractDescription {
+            char assetName[8];
+            unsigned short constructionEpoch, destructionEpoch;
+            unsigned long long stateSize;
+        } contractDescriptions[] = { {"", 0, 0, sizeof(Contract0State)} };
+    )");
+    schema::ExtractResult r = schema::extractSchema(src);
+    CHECK_FALSE(hasErrors(*r.schema));
+    REQUIRE(r.schema->contracts.size() == 1);
+    REQUIRE(r.schema->ledgers.size() == 2);
+    for (const auto& l : r.schema->ledgers) {
+        CHECK(l.recordType == schema::kNoType);
+        CHECK(l.rootType == schema::kNoType);
+        CHECK(l.error.find("not found") != std::string::npos);
+    }
+    // record type present but no capacity macro
+    cpp::MapSource src2;
+    src2.add("src/contract_core/contract_def.h", std::string(kLedgerCore).replace(std::string(kLedgerCore).find("#define ASSETS_CAPACITY"), 23, "#define XASSETS_CAPACITY"));
+    r = schema::extractSchema(src2);
+    CHECK_FALSE(hasErrors(*r.schema));
+    CHECK(r.schema->ledger(schema::LedgerKind::Spectrum)->error.empty());
+    CHECK(r.schema->ledger(schema::LedgerKind::Universe)->error.find("ASSETS_CAPACITY") != std::string::npos);
+    CHECK(r.schema->ledger(schema::LedgerKind::Universe)->recordType != schema::kNoType);
+}
+
 TEST_CASE("extract: missing root reports an error instead of throwing") {
     cpp::MapSource src;
     schema::ExtractResult r = schema::extractSchema(src);
@@ -87,6 +224,28 @@ TEST_CASE("extract: real core (HEAD) lays out every contract") {
     std::cerr << "[extract] HEAD: " << r.stats.fileCount << " files, " << r.stats.tokenCount << " tokens, pp "
               << r.stats.preprocessMs << " ms, parse " << r.stats.parseMs << " ms, layout " << r.stats.layoutMs
               << " ms, total " << r.stats.totalMs << " ms, types " << r.schema->types.size() << "\n";
+    checkLedgers(*r.schema, 16777216);
+    for (const auto& l : r.schema->ledgers) CHECK(l.headerFile.rfind("src/network_messages/", 0) == 0);
+}
+
+TEST_CASE("extract: epoch-229 snapshot ledger layouts equal the real ledger file sizes") {
+    const std::string core = testing::coreDir229();
+    const std::string state = testing::stateDir();
+    if (core.empty()) { MESSAGE("QSTATE_TEST_CORE_DIR_229 not set, skipping"); return; }
+    cpp::DiskSource src(core);
+    schema::ExtractResult r = schema::extractSchema(src);
+    printErrors(*r.schema);
+    CHECK_FALSE(hasErrors(*r.schema));
+    checkLedgers(*r.schema, 16777216);
+    CHECK(r.schema->ledger(schema::LedgerKind::Spectrum)->expectedSize == 1073741824ull);
+    CHECK(r.schema->ledger(schema::LedgerKind::Universe)->expectedSize == 805306368ull);
+    if (state.empty()) return;
+    for (const auto& l : r.schema->ledgers) {
+        const fs::path p = fs::path(state) / (std::string(schema::ledgerKindName(l.kind)) + ".229");
+        if (!fs::exists(p)) continue;
+        INFO(p);
+        CHECK(fs::file_size(p) == l.expectedSize);
+    }
 }
 
 // Core snapshot matching the sample state files (v1.303.2 / epoch 229) + the files themselves.

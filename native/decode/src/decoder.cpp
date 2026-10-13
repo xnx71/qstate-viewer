@@ -309,7 +309,9 @@ Ref Impl::childBySegment(const Ref& p, std::string_view seg, const Query& q) con
         case Cls::Collection:
         case Cls::LinkedList:
         case Cls::ArrayRole:
-        case Cls::BitArray: {
+        case Cls::BitArray:
+        case Cls::EntityRecord:
+        case Cls::AssetRecord: {
             const Member* m = findMember(p.type, arg);
             if (!m) throw nf();
             return memberRef(p, *m);
@@ -317,8 +319,12 @@ Ref Impl::childBySegment(const Ref& p, std::string_view seg, const Query& q) con
         default: throw nf();
         }
     }
+    case 'a': // member of the union alternative a universe record currently holds
+        if (tx.cls == Cls::AssetRecord) return assetAltMember(p, arg);
+        throw nf();
     case 'i':
-        if ((tx.cls == Cls::CArray || tx.cls == Cls::ArrayRole) && parseNum(arg, n) && n < tx.count) return indexRef(p, n);
+        if ((tx.cls == Cls::CArray || tx.cls == Cls::ArrayRole || tx.cls == Cls::Ledger) && parseNum(arg, n) && n < tx.count)
+            return indexRef(p, n);
         throw nf();
     case 'b':
         if (tx.cls == Cls::BitArray && parseNum(arg, n) && n < tx.count) return bitRef(p, n);
@@ -459,7 +465,12 @@ NodeInfo Impl::describe(Ref r, const Query& q) const {
         case Cls::Int: case Cls::Bool: case Cls::Char: case Cls::Enum: case Cls::Float: case Cls::Ptr:
         case Cls::Id: case Cls::Bit: case Cls::U128: case Cls::DateTime: case Cls::Opaque:
             n.kind = NodeKind::Leaf;
-            n.value = leafAt(r.type, r.offset, r.bitOffset, r.bitWidth, r.assetHint);
+            if (r.ledgerTypeHint && tx.size == 1) {
+                std::uint8_t b = 0;
+                n.value = read(r.offset, 1, &b) == 1 ? fmt.assetTypeValue(b) : LeafValue::unavailable("beyond end of file");
+            } else {
+                n.value = leafAt(r.type, r.offset, r.bitOffset, r.bitWidth, r.assetHint);
+            }
             break;
         case Cls::Record:
         case Cls::Union: {
@@ -522,6 +533,46 @@ NodeInfo Impl::describe(Ref r, const Query& q) const {
                         (tx.cls == Cls::Collection ? " elements, " + std::to_string(cs.povs.value_or(0)) + " PoVs"
                                                    : " entries");
             n.container = std::move(cs);
+            break;
+        }
+        case Cls::Ledger: {
+            // the whole ledger table: logical children = live records, raw children = all slots
+            n.kind = NodeKind::Array;
+            n.tabular = true;
+            n.rawChildCount = tx.count;
+            const auto scan = ledgerScan(r, q);
+            n.childCount = scan->live.size();
+            ContainerStats cs;
+            cs.capacity = tx.count;
+            cs.population = scan->live.size();
+            if (scan->truncated || !inFile(r.offset, r.size)) cs.warning = "the table extends beyond the end of the file";
+            if (tx.ledger.kind == schema::LedgerKind::Spectrum) {
+                n.preview = std::to_string(scan->live.size()) + " / " + std::to_string(tx.count) + " entities";
+            } else {
+                n.preview = std::to_string(scan->live.size()) + " / " + std::to_string(tx.count) + " assets: " +
+                            std::to_string(scan->byType[0].size()) + " issuances, " + std::to_string(scan->byType[1].size()) +
+                            " ownerships, " + std::to_string(scan->byType[2].size()) + " possessions";
+                if (scan->otherTypes) {
+                    cs.warning += (cs.warning.empty() ? "" : "; ") + std::to_string(scan->otherTypes) + " records have an unknown type";
+                }
+            }
+            n.container = std::move(cs);
+            break;
+        }
+        case Cls::EntityRecord: {
+            n.kind = NodeKind::Struct;
+            n.childCount = tx.members.size();
+            const auto buf = readPrefix(r.offset, r.size, 64);
+            n.preview = fmt.entityPreview(tx.ledger, buf.data(), buf.size());
+            break;
+        }
+        case Cls::AssetRecord: {
+            n.kind = NodeKind::Struct;
+            n.childCount = assetLogicalChildren(r).size();
+            n.rawChildCount = tx.members.size();
+            const auto buf = readPrefix(r.offset, r.size, 64);
+            n.preview = rootIsLedger() ? assetPreview(rootRef(), buf.data(), buf.size())
+                                       : fmt.assetPreview(tx.ledger, buf.data(), buf.size());
             break;
         }
         }
@@ -612,7 +663,26 @@ ChildList Impl::listChildren(const Ref& p, ChildView view, std::uint64_t offset,
     const bool raw = view == ChildView::Raw;
     switch (tx.cls) {
     case Cls::Record:
-    case Cls::Union: rawMembers(p); return out;
+    case Cls::Union:
+    case Cls::EntityRecord: rawMembers(p); return out;
+    case Cls::AssetRecord: {
+        if (raw) {
+            rawMembers(p);
+            return out;
+        }
+        std::vector<Ref> kids = assetLogicalChildren(p);
+        sliceRange(kids.size(), [&](std::uint64_t i) { return kids[static_cast<std::size_t>(i)]; });
+        return out;
+    }
+    case Cls::Ledger: {
+        if (raw && !hideEmpty) {
+            sliceRange(tx.count, [&](std::uint64_t i) { return indexRef(p, i); });
+            return out;
+        }
+        const auto scan = ledgerScan(p, q);
+        sliceIds(scan->live, [&](std::uint64_t slot) { return indexRef(p, slot); });
+        return out;
+    }
     case Cls::CArray:
     case Cls::ArrayRole:
         if (raw && tx.cls == Cls::ArrayRole) {
@@ -728,9 +798,24 @@ NodeLocation Impl::locate(std::uint64_t off, const Query& q) const {
             };
             switch (tx.cls) {
             case Cls::Record:
-            case Cls::Union: viaMembers(); break;
+            case Cls::Union:
+            case Cls::EntityRecord: viaMembers(); break;
+            case Cls::AssetRecord: {
+                // the logical path: members of the alternative the record holds; raw members for an empty slot
+                bool found = false;
+                for (Ref& r : assetLogicalChildren(cur)) {
+                    if (r.size && within(r)) {
+                        next = std::move(r);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) viaMembers();
+                break;
+            }
             case Cls::CArray:
             case Cls::ArrayRole:
+            case Cls::Ledger:
                 if (tx.elemSize > 0 && rel / tx.elemSize < tx.count) tryRef(indexRef(cur, rel / tx.elemSize));
                 break;
             case Cls::HashMap:

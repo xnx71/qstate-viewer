@@ -9,24 +9,26 @@ import { Breadcrumb } from "@/features/tree/Breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNode } from "@/store/data";
 import { prefsAtom, updatePrefs } from "@/store/prefs";
-import { selectedContractAtom, selectedContractInfoAtom } from "@/store/workspace";
+import { selectedTargetAtom, selectedTargetInfoAtom } from "@/store/workspace";
+import type { StateTarget } from "@/rpc/contract";
+import { isLedger, ledgerLabel, targetKey } from "@/lib/target";
 import { treeAtomFamily } from "@/store/tree";
 import { OverviewTab } from "./OverviewTab";
 import { TypeTab } from "./TypeTab";
 import { selectedByteAtom } from "@/store/hex";
 
 export function Inspector() {
-  const contract = useAtomValue(selectedContractAtom);
+  const contract = useAtomValue(selectedTargetAtom);
   if (contract === null)
     return (
       <EmptyState icon={<MousePointerClickIcon />} title="Nothing selected">
-        Pick a contract and a node to inspect its type, value and raw bytes.
+        Pick a contract or a ledger and a node to inspect its type, value and raw bytes.
       </EmptyState>
     );
   return <InspectorGate contract={contract} />;
 }
 
-function InspectorBody({ contract }: { contract: number }) {
+function InspectorBody({ contract }: { contract: StateTarget }) {
   const tree = useAtomValue(treeAtomFamily(contract));
   const prefs = useAtomValue(prefsAtom);
   const override = useAtomValue(selectedByteAtom);
@@ -67,7 +69,7 @@ function InspectorBody({ contract }: { contract: number }) {
             <TypeTab typeId={node.data.typeId} />
           </TabsContent>
           <TabsContent value="bytes" className="flex min-h-0 flex-1 flex-col">
-            <HexView contract={contract} range={{ offset: node.data.offset, length: node.data.size }} className="h-full" key={`${contract}:${override ? "o" : "n"}`} />
+            <HexView contract={contract} range={{ offset: node.data.offset, length: node.data.size }} className="h-full" key={`${targetKey(contract)}:${override ? "o" : "n"}`} />
           </TabsContent>
         </Tabs>
       )}
@@ -75,12 +77,12 @@ function InspectorBody({ contract }: { contract: number }) {
   );
 }
 
-function InspectorGate({ contract }: { contract: number }) {
-  const info = useAtomValue(selectedContractInfoAtom);
+function InspectorGate({ contract }: { contract: StateTarget }) {
+  const info = useAtomValue(selectedTargetInfoAtom);
   if (info && info.status !== "ok" && info.status !== "size-mismatch")
     return (
       <EmptyState icon={<InfoIcon />} title="No state to inspect">
-        {info.statusMessage ?? `Contract ${info.name || `#${info.index}`} has no readable state (${info.status}).`}
+        {info.statusMessage ?? `${isLedger(contract) ? ledgerLabel(contract) : `Contract #${contract}`} has no readable state (${info.status}).`}
       </EmptyState>
     );
   return <InspectorBody contract={contract} />;

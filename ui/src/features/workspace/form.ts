@@ -1,7 +1,7 @@
 // Form model of the open dialog and its conversion from / to a WorkspaceRequest.
 import type { CoreRepo, WorkspaceRequest } from "@/rpc/contract";
 import { inferMode, type RefMode } from "./refs";
-import { baseName, parseStateFileName } from "./paths";
+import { baseName, parseOpenableFileName } from "./paths";
 
 /** What the user chose in the folder browser: a directory of state files or one state file. */
 export interface StateSelection {
@@ -25,7 +25,7 @@ export interface OpenForm {
 export const selectedEpoch = (s: StateSelection | null): number | undefined => (s ? (s.epoch ?? s.epochs[s.epochs.length - 1]) : undefined);
 
 function selectionFromRequest(r: WorkspaceRequest): StateSelection {
-  const file = parseStateFileName(baseName(r.statePath));
+  const file = parseOpenableFileName(baseName(r.statePath));
   if (file) return { path: r.statePath, kind: "file", epochs: [file.epoch], epoch: file.epoch };
   return { path: r.statePath, kind: "dir", epochs: r.epoch === undefined ? [] : [r.epoch], epoch: r.epoch };
 }

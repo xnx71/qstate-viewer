@@ -73,6 +73,8 @@ export interface FsEntry {
   mtimeMs?: number;
   /** Set for files named contractNNNN.EEE: a selectable contract state file. */
   state?: { index: number; epoch: number };
+  /** Set for files named spectrum.EEE / universe.EEE: a selectable ledger file. */
+  ledger?: { kind: LedgerKind; epoch: number };
 }
 
 export interface PathHints {
@@ -107,8 +109,8 @@ export interface CoreSource {
 export interface WorkspaceRequest {
   core: CoreSource;
   /**
-   * Absolute path of a directory with contractNNNN.EEE files (all contracts of one epoch), or of ONE state file
-   * contractNNNN.EEE (then only that contract is shown).
+   * Absolute path of a directory with the files of one epoch (contractNNNN.EEE, spectrum.EEE, universe.EEE), or of
+   * ONE such file (then only that contract / ledger is shown).
    */
   statePath: string;
   /** Which epoch's files to show when the directory holds several. Default: the highest epoch present. */
@@ -216,6 +218,104 @@ export interface ContractInfo {
   generation: number;
 }
 
+// ----------------------------------------------------------------------------
+// Ledger files: spectrum.EEE (all entities / balances) and universe.EEE (all assets)
+// ----------------------------------------------------------------------------
+//
+// Both are raw dumps of an open-addressing hash table of fixed-size records (SPECTRUM_CAPACITY / ASSETS_CAPACITY
+// slots, 2^24 each today). The record types (EntityRecord, AssetRecord) and the capacities are read from the core
+// sources like the contract states. Slot = publicKey.u32[0] & (capacity - 1), linear probing; an all-zero publicKey
+// (spectrum) or type == 0 (universe) marks an empty slot.
+//
+// A ledger is addressed like a contract in every state.* / table.* method (`contract: "spectrum" | "universe"`).
+// Its state tree: root "" = the whole table (logical children = the live records in slot order, raw children = all
+// slots; both pageable), "i:<slot>" = one record, below it the record's fields. For universe records the logical
+// children are the fields of the union alternative selected by `type` (issuance / ownership / possession).
+
+export type LedgerKind = "spectrum" | "universe";
+
+/** What the state.* / table.* methods address: a contract index or a ledger of the shown epoch. */
+export type StateTarget = number | LedgerKind;
+
+export interface LedgerInfo {
+  kind: LedgerKind;
+  /** "EntityRecord" | "AssetRecord" */
+  recordTypeName: string;
+  recordTypeId?: TypeId;
+  recordSize?: number;
+  /** Slots of the hash table (SPECTRUM_CAPACITY / ASSETS_CAPACITY). */
+  capacity?: number;
+  /** capacity * recordSize according to the schema. */
+  expectedSize?: number;
+  file?: StateFileInfo;
+  status: ContractStatus;
+  statusMessage?: string;
+  /** Same semantics as ContractInfo.generation. */
+  generation: number;
+}
+
+export interface SpectrumSummary {
+  kind: "spectrum";
+  capacity: number;
+  /** Live records (non-zero public key). */
+  population: number;
+  /** Records whose balance (incomingAmount - outgoingAmount) is > 0. */
+  nonZeroBalances: number;
+  /** Sum of all balances, decimal string. */
+  totalSupply: string;
+  /** Largest balance and the slot holding it. */
+  maxBalance: { slot: number; identity: string; balance: string };
+  elapsedMs: number;
+}
+
+export interface AssetIssuanceSummary {
+  slot: number;
+  /** Issuer identity (60 letters). */
+  issuer: string;
+  name: string;
+  numberOfDecimalPlaces: number;
+  /** 7 bytes, hex. */
+  unitOfMeasurement: string;
+  /** Records referencing this issuance. */
+  ownerships: number;
+  possessions: number;
+  /** Sum of numberOfShares over its ownership records, decimal string. */
+  totalShares: string;
+}
+
+export interface UniverseSummary {
+  kind: "universe";
+  capacity: number;
+  /** Live records (type != 0). */
+  population: number;
+  issuances: number;
+  ownerships: number;
+  possessions: number;
+  /** Every issuance, in slot order. */
+  assets: AssetIssuanceSummary[];
+  elapsedMs: number;
+}
+
+export type LedgerSummary = SpectrumSummary | UniverseSummary;
+
+export interface LedgerLookupHit {
+  slot: number;
+  /** Node id of the record ("i:<slot>"). */
+  id: NodeId;
+  /** Universe only: 1 issuance, 2 ownership, 3 possession. */
+  type?: number;
+  preview: string;
+}
+
+export interface LedgerLookup {
+  identity: string;
+  /** Spectrum: at most one hit. Universe: every record whose publicKey is the identity (issuances it issued,
+   *  ownerships / possessions it holds), in probe order. */
+  hits: LedgerLookupHit[];
+  /** Slots probed (hash lookup, not a scan). */
+  probes: number;
+}
+
 export interface Diagnostic {
   severity: "note" | "warning" | "error";
   message: string;
@@ -233,6 +333,8 @@ export interface Workspace {
   state: StateDirInfo;
   /** Ascending by index. */
   contracts: ContractInfo[];
+  /** Always both kinds (status "missing-file" when the epoch has no such file; for scope "file" only the opened one). */
+  ledgers: LedgerInfo[];
   diagnostics: Diagnostic[];
 }
 
@@ -498,7 +600,7 @@ export interface SortSpec {
 }
 
 export interface TableQuery {
-  contract: number;
+  contract: StateTarget;
   id: NodeId;
   view?: string;
   offset: number;
@@ -565,10 +667,10 @@ export interface RpcMethods {
 
   "schema.types": { params: { typeIds: TypeId[] }; result: TypeInfo[] };
 
-  "state.node": { params: { contract: number; id: NodeId }; result: NodeInfo };
+  "state.node": { params: { contract: StateTarget; id: NodeId }; result: NodeInfo };
   "state.children": {
     params: {
-      contract: number;
+      contract: StateTarget;
       id: NodeId;
       /** "logical" (default): containers show their live content. "raw": the C++ members as laid out in memory. */
       view?: "logical" | "raw";
@@ -582,11 +684,11 @@ export interface RpcMethods {
   };
   /** Raw bytes as lower-case hex. length <= 65536. Reads past the end of file are truncated. */
   "state.bytes": {
-    params: { contract: number; offset: number; length: number };
+    params: { contract: StateTarget; offset: number; length: number };
     result: { offset: number; length: number; hex: string; fileSize: number };
   };
   /** Deepest node that contains the byte at `offset`. */
-  "state.locate": { params: { contract: number; offset: number }; result: NodeLocation };
+  "state.locate": { params: { contract: StateTarget; offset: number }; result: NodeLocation };
   /**
    * Exact tree path to a node, for "reveal in tree" (Find results, hex view, table rows, palette). Give exactly one of
    * `id` (any NodeId, incl. table row ids) or `offset` (the deepest node containing that byte, like `state.locate`).
@@ -596,14 +698,14 @@ export interface RpcMethods {
    * `hideEmpty` must match the value used for the `state.children` calls that will list the path.
    * Errors: not_found for an unknown id / offset outside the state.
    */
-  "state.reveal": { params: { contract: number; id?: NodeId; offset?: number; hideEmpty?: boolean }; result: NodeReveal };
+  "state.reveal": { params: { contract: StateTarget; id?: NodeId; offset?: number; hideEmpty?: boolean }; result: NodeReveal };
   /**
    * Byte-pattern search in one state file.
    * mode "auto": 60 letters -> identity; 0x.. / hex digits -> bytes; decimal -> 64-bit little-endian integer; else ASCII text.
    */
   "state.search": {
     params: {
-      contract: number;
+      contract: StateTarget;
       query: string;
       mode?: "auto" | "id" | "hex" | "int" | "text";
       /** default 200, max 5000 */
@@ -612,10 +714,16 @@ export interface RpcMethods {
     result: SearchResult;
   };
   /** KangarooTwelve digest (32 bytes, hex) of the whole state file: the contract state digest used by the node. */
+  /** Contracts only: the node digests spectrum / universe as Merkle trees over the records, not as one flat hash. */
   "state.digest": { params: { contract: number }; result: { k12: string; elapsedMs: number } };
 
-  "table.describe": { params: { contract: number; id: NodeId; view?: string }; result: TableInfo };
+  "table.describe": { params: { contract: StateTarget; id: NodeId; view?: string }; result: TableInfo };
   "table.rows": { params: TableQuery; result: TablePage };
+
+  /** Aggregates over the live records of a ledger (one scan, cached per generation). */
+  "ledger.summary": { params: { kind: LedgerKind }; result: LedgerSummary };
+  /** Hash lookup of an identity (60 letters, or 64 hex chars) in a ledger: O(probes), no scan. */
+  "ledger.lookup": { params: { kind: LedgerKind; identity: string }; result: LedgerLookup };
 }
 
 export type RpcMethod = keyof RpcMethods;
@@ -632,7 +740,7 @@ export interface RpcEvents {
   /** The schema was re-extracted (core headers changed) or state files appeared / disappeared. */
   "workspace.updated": Workspace;
   /** The content of some state files changed on disk. Carries the updated ContractInfo (new generation). */
-  "contracts.changed": { workspaceId: number; contracts: ContractInfo[] };
+  "contracts.changed": { workspaceId: number; contracts: ContractInfo[]; ledgers?: LedgerInfo[] };
 }
 
 export type RpcEventName = keyof RpcEvents;
