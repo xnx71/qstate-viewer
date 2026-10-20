@@ -41,7 +41,7 @@ nlohmann::json makeAppInfo(const ServiceConfig& config, bool gitAvailable);
 // Declare it here and append it to kModules in service.cpp.
 void registerAppMethods(ModuleContext& ctx);
 void registerSettingsMethods(ModuleContext& ctx);
-void registerFsMethods(ModuleContext& ctx);        // fs.list
+void registerFsMethods(ModuleContext& ctx);        // fs.list, fs.write
 void registerCoreMethods(ModuleContext& ctx);      // core.sync, core.commits
 void registerWorkspaceMethods(ModuleContext& ctx); // workspace.*
 void registerStateMethods(ModuleContext& ctx);     // schema.types, state.*, table.*

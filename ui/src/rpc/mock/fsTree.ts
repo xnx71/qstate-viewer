@@ -18,6 +18,8 @@ interface FsNode {
   size: number;
   mtimeMs: number;
   children?: Map<string, FsNode>;
+  /** Files written by fs.write. */
+  content?: string;
 }
 
 const KB = 1024;
@@ -223,6 +225,36 @@ export class MockFs {
   /** File names of a directory (for state dir scanning). */
   names(path: string): FsNode[] {
     return [...(this.stat(path)?.children?.values() ?? [])];
+  }
+
+  /** fs.write: chunks go to "<path>.part", `finish` renames it to the path, `abort` removes it. */
+  write(path: string, data: string, opts: { append: boolean; finish: boolean; abort: boolean }): { path: string; bytes: number } {
+    if (!path.startsWith('/') || path.endsWith('/')) throw rpcError('invalid_params', `'${path}' is not an absolute file path`);
+    const norm = normalizePath(path);
+    const name = norm.slice(norm.lastIndexOf('/') + 1);
+    const dir = this.stat(parentOf(norm) ?? '/');
+    if (!dir?.children || dir.kind !== 'dir') throw rpcError('io_error', `cannot write '${norm}.part'`);
+    const partName = `${name}.part`;
+    if (opts.abort) {
+      dir.children.delete(partName);
+      return { path: norm, bytes: 0 };
+    }
+    if (dir.children.get(name)?.kind === 'dir') throw rpcError('io_error', `'${norm}' is a directory`);
+    const prev = dir.children.get(partName);
+    const content = (opts.append && prev?.content) || '';
+    const part: FsNode = { name: partName, kind: 'file', size: 0, mtimeMs: Date.now(), content: content + data };
+    part.size = new TextEncoder().encode(part.content as string).length;
+    dir.children.set(partName, part);
+    if (opts.finish) {
+      dir.children.delete(partName);
+      dir.children.set(name, { ...part, name });
+    }
+    return { path: norm, bytes: part.size };
+  }
+
+  /** Contents of a file written by fs.write (tests). */
+  read(path: string): string | undefined {
+    return this.stat(normalizePath(path))?.content;
   }
 
   list(path: string, showHidden: boolean): FsListing {

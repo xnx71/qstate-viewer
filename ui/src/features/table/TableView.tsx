@@ -7,6 +7,7 @@ import {
   ClipboardCopyIcon,
   Columns3Icon,
   CornerDownRightIcon,
+  DownloadIcon,
   EyeOffIcon,
   PinIcon,
   PinOffIcon,
@@ -45,6 +46,7 @@ import { isLedger, rootLabel } from "@/lib/target";
 import type { CellRenderer } from "./cellRenderer";
 import { useTableInfo } from "@/store/data";
 import { centerTabAtom, filterRequestAtom, patchTableUi, tableUiAtomFamily, type TableTarget } from "@/store/table";
+import { exportSource, openExport } from "@/store/export";
 import { tableCellMenu, tableHeaderMenu } from "@/features/contextmenu/builders/table";
 import { ledgerRowTarget } from "@/features/contextmenu/builders/ledger";
 import { useContextMenu } from "@/features/contextmenu/useContextMenu";
@@ -189,6 +191,8 @@ export function TableView({ target, renderCell, toolbar, onViewChange }: TableVi
     await copyText(json ? rowToJson(row, cols, isVisible) : rowToTsv(row, cols, isVisible));
     toast.success(json ? "Row copied as JSON" : "Row copied as TSV", { duration: 1200 });
   };
+  const openExportDialog = (row: TableRow | undefined, scope: "row" | "all") =>
+    openExport({ source: exportSource(target.contract, target.id, target.label, target.typeName, ui), row, scope, total: win.total });
   const copyPage = async () => {
     const lines = [headerTsv(cols, isVisible)];
     for (const w of windowRows) if (w.row) lines.push(rowToTsv(w.row, cols, isVisible));
@@ -262,6 +266,8 @@ export function TableView({ target, renderCell, toolbar, onViewChange }: TableVi
         await copyText(rowToJson(row, cols, isVisible));
         toast.success("Row copied as JSON", { duration: 1200 });
       },
+      exportRow: () => openExportDialog(row, "row"),
+      exportTable: () => openExportDialog(row, "all"),
       jumpToTree: () => jumpToTree(target, row),
       node: {
         source: "table",
@@ -362,6 +368,15 @@ export function TableView({ target, renderCell, toolbar, onViewChange }: TableVi
               <DropdownMenuItem onClick={() => void copyPage()}>Visible rows as TSV</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => openExportDialog(active ? rowByIndex.get(active.index) : undefined, "all")}
+            title="Export rows to CSV, TSV, JSON, JSON Lines, Markdown or SQL"
+            data-testid="table-export"
+          >
+            <DownloadIcon /> Export
+          </Button>
           <Button
             variant="outline"
             size="xs"

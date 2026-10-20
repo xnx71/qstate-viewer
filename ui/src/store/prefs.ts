@@ -3,6 +3,7 @@ import { atom } from "jotai";
 import { invoke } from "@/rpc/client";
 import type { Settings } from "@/rpc/contract";
 import { storageGet, storageSet } from "@/lib/safeStorage";
+import { parseExportOptions, type ExportOptions } from "@/lib/exportFormat";
 import { DEFAULT_UI_SIZE, parseUiSize, type UiSize } from "@/lib/sizes";
 import { store } from "./store";
 import { settingsAtom } from "./workspace";
@@ -23,6 +24,10 @@ export interface Prefs {
   browseDir: string;
   /** UI size: scales type, spacing and row heights. */
   uiSize: UiSize;
+  /** Folder of the last export ("" = the Downloads folder). */
+  exportDir: string;
+  /** Format and value choices of the last export. */
+  exportOptions: Omit<ExportOptions, "tableName">;
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -33,6 +38,8 @@ export const DEFAULT_PREFS: Prefs = {
   inspectorTab: "overview",
   browseDir: "",
   uiSize: DEFAULT_UI_SIZE,
+  exportDir: "",
+  exportOptions: parseExportOptions(undefined),
 };
 
 /** Defensive parse of settings.ui (free-form record owned by us, possibly written by older versions). */
@@ -52,6 +59,8 @@ export function parsePrefs(ui: Record<string, unknown> | undefined): Prefs {
   if (tab === "overview" || tab === "type" || tab === "bytes") out.inspectorTab = tab;
   if (typeof ui["browseDir"] === "string") out.browseDir = ui["browseDir"];
   out.uiSize = parseUiSize(ui["uiSize"]);
+  if (typeof ui["exportDir"] === "string") out.exportDir = ui["exportDir"];
+  out.exportOptions = parseExportOptions(ui["exportOptions"]);
   return out;
 }
 

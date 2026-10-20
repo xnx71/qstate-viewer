@@ -8,10 +8,12 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ContextMenuHost } from "@/features/contextmenu/ContextMenuHost";
 import { CommandPalette } from "@/features/palette/CommandPalette";
+import { ExportDialog } from "@/features/export/ExportDialog";
 import { DiagnosticsDialog } from "@/features/workspace/DiagnosticsDialog";
 import { OpenWorkspaceDialog } from "@/features/workspace/OpenWorkspaceDialog";
 import type { RpcError } from "@/rpc/contract";
 import { toRpcError } from "@/rpc/errors";
+import { initHostWindow } from "@/lib/hostWindow";
 import { bootstrap } from "@/store/actions";
 import { store } from "@/store/store";
 import { openDialogAtom, workspaceAtom } from "@/store/workspace";
@@ -20,6 +22,7 @@ import { HelpDialog } from "./features/shell/HelpDialog";
 import { Layout } from "./features/shell/Layout";
 import { StatusBar } from "./features/shell/StatusBar";
 import { TopBar } from "./features/shell/TopBar";
+import { WindowFrame } from "./features/shell/WindowControls";
 import { useShortcuts } from "./features/shell/useShortcuts";
 
 type Boot = { phase: "loading" } | { phase: "ready" } | { phase: "error"; error: RpcError };
@@ -37,6 +40,7 @@ export function App() {
     );
   };
   useEffect(start, []);
+  useEffect(initHostWindow, []);
 
   return (
     <TooltipProvider delay={400}>
@@ -66,9 +70,11 @@ export function App() {
       </div>
       <OpenWorkspaceDialog />
       <DiagnosticsDialog />
+      <ExportDialog />
       <HelpDialog />
       <CommandPalette />
       <ContextMenuHost />
+      <WindowFrame />
       <Toaster position="bottom-right" closeButton={false} />
     </TooltipProvider>
   );

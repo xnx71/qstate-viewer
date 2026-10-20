@@ -73,6 +73,16 @@ desktop app.
   dropped). Payloads are embedded as `JSON.parse("<json string literal>")` (U+2028/2029 escaped), so no payload can
   break out of the script. `__qstate_emit` is only called when the UI has defined it; events emitted before are lost, so
   the UI must call `workspace.get` after connecting.
+* `window.__qstate_window(command, arg)` (main.cpp + `app/window_chrome.cpp`): the window has no system title bar, the
+  UI's top bar takes its place. Bound callbacks run on the UI thread (webview dispatches them), so the command calls
+  Win32 / GTK directly: `state`, `minimize`, `toggle-maximize`, `close` (`terminate`), `drag` (start a window move with
+  the pressed mouse button) and `resize` (edge `n`/`s`/`e`/`w`/`ne`/`nw`/`se`/`sw`); the answer is
+  `{frameless, maximized, platform}`. Windows: webview's window procedure is wrapped and `WM_NCCALCSIZE` takes the
+  caption out of the non-client area; the window keeps `WS_OVERLAPPEDWINDOW`, so Aero Snap, the maximize animation and
+  the (invisible) side / bottom resize borders stay native; moves and the top-edge resize post `WM_NCLBUTTONDOWN`
+  (`HTCAPTION` / `HTTOP`...) while the button is down. Not verified on Windows. GTK 3: `gtk_window_set_decorated(FALSE)`,
+  `gtk_window_begin_move_drag` / `begin_resize_drag` (the UI draws 4 px resize edges and a hairline border). macOS and
+  GTK 4 keep the system frame (`frameless: false`, the UI shows no window buttons). The self test page keeps the frame.
 * Threading: the webview is touched from the main thread only; worker/pump threads use `dispatch` and `resolve`. SIGINT /
   SIGTERM are blocked in all threads and collected by a `sigtimedwait` thread that calls `dispatch(terminate)`.
   Shutdown order after `run()` returns: helper threads, event pump, `dispatcher.shutdown()` (no `resolve()`

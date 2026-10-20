@@ -62,6 +62,16 @@ The workspace dialog has three parts:
 
 Recent workspaces and UI preferences are kept in the settings file (`~/.config/qstate-viewer/settings.json`).
 
+**Export.** Every table (containers, arrays, the ledgers) exports to **CSV, TSV, JSON, JSON Lines, Markdown or SQL**:
+the *Export* button of the table toolbar, *Export* in the menu of a cell (this row / all rows), or *Export…* in the menu
+of a tabular tree node. All rows are exported as the table shows them (its filters and sort), optionally only the visible
+columns, with integers in decimal or hex and identities as 60-letter identities or hex public keys. The file goes into a
+folder chosen in the dialog (Downloads by default); small results can also be copied to the clipboard. Large tables
+(millions of rows) are written in chunks with a progress bar and can be cancelled; a cancelled export leaves no file.
+
+**Window.** The window has no system title bar: the top bar is the title bar (drag it to move the window, double click
+it to maximize / restore) and has minimize / maximize / close buttons at the right.
+
 ## How the sources are fetched
 
 For every repository URL the app keeps one local **bare mirror** in the cache directory

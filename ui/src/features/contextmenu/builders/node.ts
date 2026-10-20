@@ -7,6 +7,7 @@ import {
   ChevronsUpDownIcon,
   CopyIcon,
   CornerDownRightIcon,
+  DownloadIcon,
   EyeOffIcon,
   FingerprintIcon,
   FoldVerticalIcon,
@@ -221,7 +222,10 @@ export function nodeMenu(t: NodeTarget, deps: MenuDeps = realDeps): MenuEntry[] 
 
   // 4. structure specific
   const extra: MenuEntry[] = [];
-  if (info?.tabular) extra.push(item("open-table", "Open as table", () => deps.openTable(t.contract, t.id, t.label || "state", info.typeName), { icon: TableIcon, shortcut: "T" }));
+  if (info?.tabular) {
+    extra.push(item("open-table", "Open as table", () => deps.openTable(t.contract, t.id, t.label || "state", info.typeName), { icon: TableIcon, shortcut: "T" }));
+    extra.push(item("export-table", "Export…", () => deps.exportTable(t.contract, t.id, t.label || "state", info.typeName), { icon: DownloadIcon }));
+  }
   if (info?.rawChildCount !== undefined && t.tree) {
     const raw = t.tree.view === "raw";
     extra.push(

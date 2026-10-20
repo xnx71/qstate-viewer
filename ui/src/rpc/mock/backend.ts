@@ -76,6 +76,8 @@ export interface MockBackend {
   setSim(patch: Partial<MockSim>): void;
   /** Drops all local repository mirrors: the next core.sync clones again. */
   forgetMirrors(): void;
+  /** Contents of a file written with fs.write (tests). */
+  readFile(path: string): string | undefined;
   dispose(): void;
 }
 
@@ -404,6 +406,15 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
       return fs.list(path, p.showHidden === true);
     },
 
+    'fs.write': (params) => {
+      const p = obj(params);
+      const flag = (k: string): boolean => {
+        if (p[k] !== undefined && typeof p[k] !== 'boolean') throw rpcError('invalid_params', `'${k}' must be a boolean`);
+        return p[k] === true;
+      };
+      return fs.write(str(p, 'path'), str(p, 'data', true), { append: flag('append'), finish: flag('finish'), abort: flag('abort') });
+    },
+
     'core.sync': async (params): Promise<CoreRepo> => {
       const p = obj(params);
       const url = str(p, 'repoUrl').trim();
@@ -687,6 +698,7 @@ export function createMockBackend(options: MockOptions = {}): MockBackend {
     setSim(patch) {
       Object.assign(sim, patch);
     },
+    readFile: (path) => fs.read(path),
     forgetMirrors() {
       mirrors.clear();
     },

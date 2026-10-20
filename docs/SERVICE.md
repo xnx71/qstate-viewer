@@ -10,7 +10,7 @@ only sees a `rpc::Dispatcher` + `rpc::EventBus`.
 | --- | --- |
 | `app_methods.cpp` | `app.info` (`gitAvailable` probed once per process, `defaultRepoUrl`, `transport` is always `"webview"`) |
 | `settings_methods.cpp` | `settings.get` / `settings.update` (`support::SettingsStore`; patch semantics live there) |
-| `fs_methods.cpp` | `fs.list` (`support::listDirectory`, "" = home; files named `contractNNNN.EEE` carry `state: {index, epoch}`, `hints.stateEpochs`) |
+| `fs_methods.cpp` | `fs.list` (`support::listDirectory`, "" = home; files named `contractNNNN.EEE` carry `state: {index, epoch}`, `hints.stateEpochs`); `fs.write` (exports: chunks to `<path>.part`, `finish` renames it to the path, `abort` removes it) |
 | `core_methods.cpp` | `core.sync`, `core.commits`; `core.progress` events |
 | `workspace_methods.cpp` | `workspace.open / get / reload / close`; parameter validation; `recentWorkspaces` is updated after every successful open |
 | `state_methods.cpp` | `schema.types`, `state.node / children / bytes / locate / reveal / search / digest`, `table.describe / rows`; limits of contract.ts are enforced (`invalid_params` outside 1..1000 children / table rows, 1..5000 search, bytes <= 65536); `contract` is a `StateTarget` (`state_target.h`: a contract index or `"spectrum"` / `"universe"`) |

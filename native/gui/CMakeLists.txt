@@ -39,7 +39,7 @@ if(NOT WebviewDeps_FOUND)
     return()
 endif()
 
-add_executable(qstate-viewer app/main.cpp)
+add_executable(qstate-viewer app/main.cpp app/window_chrome.cpp)
 target_link_libraries(qstate-viewer PRIVATE qstate::gui qstate::webview WebviewDeps::WebviewDeps Threads::Threads)
 qstate_set_warnings(qstate-viewer)
 target_compile_definitions(qstate-viewer PRIVATE QSTATE_VERSION_STRING="${PROJECT_VERSION}")

@@ -176,3 +176,33 @@ TEST_CASE("fs.list") {
     CHECK(h.errorCode("fs.list", json::object()) == "invalid_params");
 }
 
+TEST_CASE("fs.write") {
+    Harness h;
+    TempDir t;
+    const std::string out = (t / "export.csv").string();
+    // chunks go to <path>.part, finish renames
+    CHECK(h.ok("fs.write", {{"path", out}, {"data", "a,b\n"}})["bytes"] == 4);
+    CHECK(fs::exists(out + ".part"));
+    CHECK_FALSE(fs::exists(out));
+    CHECK(h.ok("fs.write", {{"path", out}, {"data", "1,2\n"}, {"append", true}})["bytes"] == 8);
+    json done = h.ok("fs.write", {{"path", out}, {"data", "3,4\n"}, {"append", true}, {"finish", true}});
+    CHECK(done["bytes"] == 12);
+    CHECK(done["path"] == out);
+    CHECK_FALSE(fs::exists(out + ".part"));
+    CHECK(readFile(out) == "a,b\n1,2\n3,4\n");
+    // a new export replaces the file; without append the part file starts empty
+    h.ok("fs.write", {{"path", out}, {"data", "old"}});
+    h.ok("fs.write", {{"path", out}, {"data", "x"}, {"finish", true}});
+    CHECK(readFile(out) == "x");
+    // abort removes the part file and leaves the file alone
+    h.ok("fs.write", {{"path", out}, {"data", "partial"}});
+    h.ok("fs.write", {{"path", out}, {"abort", true}});
+    CHECK_FALSE(fs::exists(out + ".part"));
+    CHECK(readFile(out) == "x");
+
+    CHECK(h.errorCode("fs.write", json::object()) == "invalid_params");
+    CHECK(h.errorCode("fs.write", {{"path", "relative.csv"}, {"data", "x"}}) == "invalid_params");
+    CHECK(h.errorCode("fs.write", {{"path", t.str()}, {"data", "x"}}) == "io_error");
+    CHECK(h.errorCode("fs.write", {{"path", (t / "nope" / "a.csv").string()}, {"data", "x"}}) == "io_error");
+}
+

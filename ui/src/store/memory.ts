@@ -91,6 +91,8 @@ declare global {
       trim(fraction: number): void;
       /** Mock backend only: pretend a state file changed on disk. */
       touch(): void;
+      /** Mock backend only: contents of a file written with fs.write (exports). */
+      readFile(path: string): string | undefined;
     };
   }
 }
@@ -100,5 +102,6 @@ export function installDebugHook(): void {
     stats: debugStats,
     trim: trimCaches,
     touch: () => getMockTransport()?.backend.triggerChange(),
+    readFile: (path) => getMockTransport()?.backend.readFile(path),
   };
 }

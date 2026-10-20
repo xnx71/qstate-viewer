@@ -29,8 +29,10 @@ import { openSearch } from "@/store/search";
 import { store } from "@/store/store";
 import { appInfoAtom, helpDialogAtom, openDialogAtom, paletteOpenAtom, pendingChangesAtom, contractsAtom, selectedContractInfoAtom, selectedTargetAtom, workspaceAtom } from "@/store/workspace";
 import { isLedger, ledgerLabel } from "@/lib/target";
+import { hostWindowAtom, titleBarProps } from "@/lib/hostWindow";
 import { MOD } from "./HelpDialog";
 import { SettingsPopover } from "./SettingsPopover";
+import { WindowControls } from "./WindowControls";
 
 function IconTip({ label, kbd, children }: { label: string; kbd?: string; children: React.ReactElement }) {
   return (
@@ -108,8 +110,10 @@ export function TopBar() {
   const contracts = useAtomValue(contractsAtom);
   const names = pending.targets.map((t) => (isLedger(t) ? ledgerLabel(t) : contracts.find((c) => c.index === t)?.name || `#${t}`));
   const KindIcon = ws ? KIND_ICON[ws.core.kind] : TagIcon;
+  const frameless = !!useAtomValue(hostWindowAtom)?.frameless;
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-canvas px-3" role="banner">
+    // Without a system title bar this is the title bar: drag to move, double click to maximize.
+    <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-canvas px-3 select-none" role="banner" {...titleBarProps(frameless)}>
       <div className="flex items-center gap-2.5">
         <div className="flex size-7 items-center justify-center rounded-lg bg-[linear-gradient(135deg,var(--brand),color-mix(in_oklab,var(--brand),var(--t-id)_55%))] text-brand-fg shadow-soft">
           <BoxIcon className="size-4" />
@@ -199,6 +203,7 @@ export function TopBar() {
           </Button>
         </IconTip>
       </div>
+      <WindowControls />
     </header>
   );
 }

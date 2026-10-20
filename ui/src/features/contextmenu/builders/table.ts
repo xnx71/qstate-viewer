@@ -4,7 +4,9 @@ import {
   ArrowUpIcon,
   ArrowUpDownIcon,
   CopyIcon,
+  DownloadIcon,
   EyeOffIcon,
+  FileDownIcon,
   FilterIcon,
   FilterXIcon,
   ListFilterIcon,
@@ -61,6 +63,9 @@ export interface TableCellTarget {
   hideColumn: () => void;
   copyRowTsv: () => unknown;
   copyRowJson: () => unknown;
+  /** Open the export dialog for this row / for all rows of the table. */
+  exportRow: () => unknown;
+  exportTable: () => unknown;
   jumpToTree: () => unknown;
   /** The row's node (for the Node submenu); its `select` makes the row the inspector selection. */
   node: NodeTarget;
@@ -75,6 +80,7 @@ export function tableCellMenu(t: TableCellTarget, deps: MenuDeps = realDeps): Me
   const target = contractOf(t.cell, deps);
   if (target) out.push(item("goto-contract", `Go to contract ${target.name}`, () => deps.gotoContract(target.index), { icon: SquareArrowOutUpRightIcon }));
   out.push(sub("copy-row", "Copy row", [item("copy-row-tsv", "As TSV", t.copyRowTsv, { icon: TableIcon }), item("copy-row-json", "As JSON", t.copyRowJson, { icon: CopyIcon })], { icon: CopyIcon }));
+  out.push(sub("export", "Export", [item("export-row", "This row…", t.exportRow, { icon: FileDownIcon }), item("export-table", "All rows…", t.exportTable, { icon: TableIcon })], { icon: DownloadIcon }));
   if (t.ledger) {
     out.push(SEP);
     out.push(sub("record", `Record #${t.ledger.slot}`, ledgerRowItems(t.ledger, deps), { icon: ListTreeIcon }));
@@ -100,8 +106,10 @@ export function tableCellMenu(t: TableCellTarget, deps: MenuDeps = realDeps): Me
   );
   if (t.filters.length > 0) out.push(item("clear-filters", `Clear filters (${t.filters.length})`, () => t.setFilters([]), { icon: FilterXIcon }));
   out.push(SEP);
-  out.push(item("jump-to-tree", "Jump to tree", t.jumpToTree, { icon: LocateFixedIcon, ...unless(t.loaded ? null : "row not loaded") }));
-  out.push(nodeSubmenu(t.node, deps));
+  // "Jump to tree" leads the Node submenu (the table toolbar has it as a button too): the top level stays within its limit
+  const node = nodeSubmenu(t.node, deps);
+  const jump = item("jump-to-tree", "Jump to tree", t.jumpToTree, { icon: LocateFixedIcon, ...unless(t.loaded ? null : "row not loaded") });
+  out.push(node.kind === "sub" ? { ...node, items: [jump, SEP, ...node.items] } : node);
   return out;
 }
 

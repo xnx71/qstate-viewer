@@ -645,6 +645,13 @@ export interface RpcMethods {
 
   /** Directory browser. path "" = home directory. Hidden entries are excluded unless showHidden. */
   "fs.list": { params: { path: string; showHidden?: boolean }; result: FsListing };
+  /**
+   * Exports. Writes `data` to "<path>.part" (from the start, or appended with `append`); `finish` then renames it to
+   * `path`, replacing a file of that name, so an interrupted export never leaves a truncated file under the chosen name.
+   * `abort` removes the part file. `path` must be absolute; io_error when the folder does not exist or is not writable.
+   * `bytes`: size of the part file after the write (0 for abort).
+   */
+  "fs.write": { params: { path: string; data?: string; append?: boolean; finish?: boolean; abort?: boolean }; result: { path: string; bytes: number } };
 
   /**
    * Makes sure the local mirror of the repository exists and is current (first call: clone, later: fetch), then lists

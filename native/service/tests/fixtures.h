@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -57,6 +58,13 @@ inline void writeFile(const fs::path& path, const std::string& content) {
     fs::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out << content;
+}
+
+inline std::string readFile(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
 }
 
 inline void writeBytes(const fs::path& path, const std::vector<std::uint8_t>& bytes) {

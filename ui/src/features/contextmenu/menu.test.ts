@@ -34,6 +34,7 @@ function fakeDeps(over: Partial<MenuDeps> = {}): MenuDeps {
     hexJump: vi.fn(),
     promptOffset: vi.fn(),
     openTable: vi.fn(),
+    exportTable: vi.fn(),
     setView: vi.fn(async () => true),
     hideEmpty: () => false,
     toggleHideEmpty: vi.fn(),
@@ -230,6 +231,8 @@ describe("node menu", () => {
     expect(deps.expandChildren).toHaveBeenCalledWith(1, [2]);
     await run(collapsed, "open-table");
     expect(deps.openTable).toHaveBeenCalledWith(1, "n/1", "entity", "Array<uint64, 8>");
+    await run(collapsed, "export-table");
+    expect(deps.exportTable).toHaveBeenCalledWith(1, "n/1", "entity", "Array<uint64, 8>");
     await run(collapsed, "toggle-view");
     expect(deps.setView).toHaveBeenCalledWith(1, "raw");
     await run(collapsed, "hide-empty");
@@ -244,7 +247,7 @@ describe("node menu", () => {
 
   it("only offers what applies: no table / raw view / children actions on a plain leaf", () => {
     const m = nodeMenu(target({ info: info({ value: INT }), value: INT, tree: { expanded: false, nodePath: [0], toggle: () => 1, view: "logical" } }), fakeDeps());
-    for (const id of ["open-table", "toggle-view", "hide-empty", "toggle", "expand-children", "collapse-children"]) expect(find(m, id), id).toBeUndefined();
+    for (const id of ["open-table", "export-table", "toggle-view", "hide-empty", "toggle", "expand-children", "collapse-children"]) expect(find(m, id), id).toBeUndefined();
   });
 
   it("stays under the top-level item cap in every variant", () => {
@@ -293,6 +296,8 @@ function cellTarget(over: Partial<Parameters<typeof tableCellMenu>[0]> = {}): Pa
     hideColumn: vi.fn(),
     copyRowTsv: vi.fn(),
     copyRowJson: vi.fn(),
+    exportRow: vi.fn(),
+    exportTable: vi.fn(),
     jumpToTree: vi.fn(),
     node: target({ source: "table" }),
     ...over,
@@ -327,6 +332,12 @@ describe("table menus", () => {
     await run(m, "copy-row-json");
     expect(t.copyRowTsv).toHaveBeenCalled();
     expect(t.copyRowJson).toHaveBeenCalled();
+    await run(m, "export-row");
+    await run(m, "export-table");
+    expect(t.exportRow).toHaveBeenCalled();
+    expect(t.exportTable).toHaveBeenCalled();
+    // "Jump to tree" leads the Node submenu
+    expect(ids((find(m, "node") as MenuSub).items)[0]).toBe("jump-to-tree");
   });
 
   it("explains why filtering is not available and hides 'Clear filters' without filters", () => {

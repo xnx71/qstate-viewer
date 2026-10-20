@@ -35,6 +35,7 @@ const std::vector<std::string>& Service::contractMethods() {
         "settings.get",
         "settings.update",
         "fs.list",
+        "fs.write",
         "core.sync",
         "core.commits",
         "workspace.open",

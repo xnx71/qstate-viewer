@@ -4,6 +4,8 @@
 //   window.__qstate_invoke(method, params) -> Promise   (bound here; runs on the dispatcher's worker pool)
 //   window.__qstate_emit(name, payload)                 (defined by the UI; called here with batched events)
 //
+// and window.__qstate_window(command, arg) -> state for the UI's own title bar (the window has none, window_chrome.h).
+//
 // All logic lives in qstate_service / qstate_rpc / qstate_gui; this file only wires them to the webview.
 //
 // The executable takes no command line arguments. Test hooks (environment variables; not for users, documented in
@@ -27,6 +29,7 @@
 #include "qstate/rpc/dispatcher.h"
 #include "qstate/rpc/framing.h"
 #include "qstate/service/service.h"
+#include "window_chrome.h"
 
 #include <webview/webview.h>
 
@@ -171,6 +174,8 @@ int main(int argc, char** argv) {
     webview::webview& w = *window;
     w.set_title(kTitle);
     w.set_size(kWidth, kHeight, WEBVIEW_HINT_NONE);
+    void* const nativeWindow = w.window().ok() ? w.window().value() : nullptr;
+    const bool frameless = !selftest && gui::makeFrameless(nativeWindow);
 
     // Activity of the bridge (a request arrived or was answered) re-arms the idle memory trims below.
     gui::IdleTrigger idleHeap{kIdleHeapTrim};
@@ -200,6 +205,28 @@ int main(int argc, char** argv) {
                     w.resolve(id, reply.status, reply.json);
                     activity();
                 });
+        },
+        nullptr);
+
+    // window.__qstate_window(command, arg) -> {frameless, maximized, platform}: minimize / maximize / close / move / resize
+    // from the UI's title bar. Bindings run on the UI thread.
+    w.bind(
+        "__qstate_window",
+        [&w, nativeWindow, frameless](const std::string& id, const std::string& req, void*) {
+            // req is a JSON array of the call arguments: ["command", "arg"]
+            auto call = nlohmann::json::parse(req, nullptr, false);
+            auto text = [&call](std::size_t i) {
+                return call.is_array() && call.size() > i && call[i].is_string() ? call[i].get<std::string>() : std::string();
+            };
+            const std::string command = text(0);
+            if (command == "close") {
+                w.resolve(id, 0, "null");
+                w.dispatch([&w] { w.terminate(); });
+                return;
+            }
+            nlohmann::json state = gui::windowCommand(nativeWindow, frameless ? command : std::string("state"), text(1));
+            state["frameless"] = frameless;
+            w.resolve(id, 0, state.dump());
         },
         nullptr);
 

@@ -116,6 +116,7 @@ try {
   await waitFor(page, (t) => document.querySelector("[data-testid=table-total]")?.textContent !== t, totalBefore, 20000, "filtered total");
   step("filter applied, total changed");
 
+
   // 9. search
   await page.keyboard.down("Control");
   await page.keyboard.press("KeyF");
@@ -172,6 +173,30 @@ try {
   await page.mouse.click(box.x + 120, box.y + 10, { button: "right" });
   await page.waitForSelector("[data-ctx-menu] [role=menuitem]", { timeout: 3000 });
   step(`right click on a tree row opens the custom menu (${items.length} items), Escape closes it, native menu prevented: ${prevented}`);
+  // hovering a submenu trigger opens the submenu and keeps the menu (regression: the whole menu used to close)
+  const subTrigger = await page.evaluate(() => {
+    const r = document.querySelector("[data-ctx-menu] [aria-haspopup]")?.getBoundingClientRect();
+    return r ? { x: r.x + 30, y: r.y + r.height / 2 } : null;
+  });
+  if (!subTrigger) throw new Error("tree row menu has no submenu");
+  await page.mouse.move(subTrigger.x, subTrigger.y, { steps: 10 });
+  await waitFor(page, () => document.querySelectorAll("[data-ctx-menu]").length === 2, null, 3000, "submenu open, menu kept");
+  const subBox = await page.evaluate(() => {
+    const r = [...document.querySelectorAll("[data-ctx-menu]")][1].getBoundingClientRect();
+    return { x: r.x, y: r.y, h: r.height };
+  });
+  await page.mouse.move(subBox.x + 30, subTrigger.y, { steps: 10 });
+  await page.mouse.move(subBox.x + 30, subBox.y + subBox.h - 12, { steps: 10 });
+  await sleep(300);
+  if ((await page.$$("[data-ctx-menu]")).length !== 2) throw new Error("menu closed while moving into the submenu");
+  // Escape closes the submenu first, then the menu
+  await page.keyboard.press("Escape");
+  await waitFor(page, () => document.querySelectorAll("[data-ctx-menu]").length === 1, null, 3000, "submenu closed with Escape");
+  await page.keyboard.press("Escape");
+  await waitFor(page, () => !document.querySelector("[data-ctx-menu]"), null, 3000, "menu closed with Escape");
+  step("submenus open on hover, stay open while the pointer moves into them, Escape closes them one level at a time");
+  await page.mouse.click(box.x + 120, box.y + 10, { button: "right" });
+  await page.waitForSelector("[data-ctx-menu] [role=menuitem]", { timeout: 3000 });
   if (prevented !== true) throw new Error("contextmenu was not default-prevented");
   // keyboard: ArrowDown, ArrowDown, Enter runs the second item (a copy action: toast)
   await page.keyboard.press("ArrowDown");
@@ -214,6 +239,55 @@ try {
   if (!(num(balances[0]) >= num(balances[1]) && num(balances[1]) >= num(balances[2]))) throw new Error(`not sorted by balance desc: ${balances.join(" | ")}`);
   const sidebarPop = await page.$eval("[data-testid=ledger-pop-spectrum]", (e) => e.textContent);
   step(`spectrum: table + summary (population 5,000; sidebar says ${sidebarPop.trim()}), sorted by balance desc`);
+
+  // 12b. export: the spectrum table (5 pages) as JSON into a folder (written with fs.write), then one row as CSV from the menu
+  const tableTotal = Number(/^[\d,]+/.exec(await page.$eval("[data-ledger-view=spectrum] [data-testid=table-total], [data-testid=ledger-view-spectrum] [data-testid=table-total]", (e) => e.textContent))?.[0].replace(/,/g, ""));
+  if (!(tableTotal > 1000)) throw new Error(`spectrum table total ${tableTotal}: too small to test paging`);
+  const exportAs = async (format, name) => {
+    await page.waitForSelector("[data-testid=export-form]", { timeout: 5000 });
+    await clickText(page, format, "[role=radiogroup][aria-label=Format] [role=radio]");
+    await typeInto(page, 'input[aria-label="Export folder"]', "/home/mock/Downloads");
+    await typeInto(page, 'input[aria-label="File name"]', name);
+    await page.click("[data-testid=export-run]");
+  };
+  const readExport = (file) => page.evaluate((p) => window.__qstate_debug?.readFile(p) ?? null, file);
+  await page.click("[data-testid=ledger-view-spectrum] [data-testid=table-export]");
+  await exportAs("JSON", "smoke");
+  await waitFor(page, () => !document.querySelector("[role=dialog]"), null, 20000, "export finished");
+  const json = JSON.parse((await readExport("/home/mock/Downloads/smoke.json")) ?? "null");
+  if (!Array.isArray(json) || json.length !== tableTotal) throw new Error(`exported ${json?.length} rows, the table has ${tableTotal}`);
+  // same name again: asks before replacing
+  await page.keyboard.press("Escape");
+  await page.click("[data-testid=table-export]");
+  await exportAs("JSON", "smoke");
+  await waitFor(page, () => /already exists/.test(document.querySelector("[data-testid=export-form] [role=alert]")?.textContent ?? ""), null, 5000, "replace warning");
+  await page.click("[data-testid=export-run]");
+  await waitFor(page, () => !document.querySelector("[role=dialog]"), null, 20000, "export replaced");
+  // one row from the cell menu: Export > This row…
+  const cellBox = await (await page.$("[data-testid=ledger-view-spectrum] [role=grid] [role=row][aria-rowindex] [role=gridcell][data-col=balance]")).boundingBox();
+  await page.mouse.click(cellBox.x + 20, cellBox.y + 8, { button: "right" });
+  await page.waitForSelector("[data-ctx-menu] [role=menuitem]", { timeout: 3000 });
+  const triggerOf = (label) =>
+    page.evaluate((t) => {
+      const r = [...document.querySelectorAll("[data-ctx-menu] [role=menuitem]")].find((e) => e.textContent.trim().startsWith(t))?.getBoundingClientRect();
+      return r ? { x: r.x + 30, y: r.y + r.height / 2 } : null;
+    }, label);
+  await waitFor(page, () => [...document.querySelectorAll("[data-ctx-menu] [aria-haspopup]")].some((e) => e.textContent.trim() === "Export"), null, 5000, "Export submenu in the cell menu");
+  const exportSub = await triggerOf("Export");
+  await page.mouse.move(exportSub.x, exportSub.y, { steps: 8 });
+  await waitFor(page, () => document.querySelectorAll("[data-ctx-menu]").length === 2, null, 3000, "Export submenu open");
+  const thisRow = await triggerOf("This row");
+  await page.mouse.move(thisRow.x - 20, exportSub.y, { steps: 6 });
+  await page.mouse.move(thisRow.x, thisRow.y, { steps: 6 });
+  await page.mouse.click(thisRow.x, thisRow.y);
+  await page.waitForSelector("[data-testid=export-form]", { timeout: 5000 });
+  const rowScope = await page.$eval("[role=radiogroup][aria-label=Rows] [role=radio][aria-checked=true]", (e) => e.textContent);
+  if (!/^This row/.test(rowScope)) throw new Error(`row export opened with scope "${rowScope}"`);
+  await exportAs("CSV", "smoke-row");
+  await waitFor(page, () => !document.querySelector("[role=dialog]"), null, 10000, "row export finished");
+  const csv = (await readExport("/home/mock/Downloads/smoke-row.csv")) ?? "";
+  if (csv.trimEnd().split("\r\n").length !== 2) throw new Error(`row export: ${JSON.stringify(csv.slice(0, 200))}`);
+  step(`export: ${tableTotal} spectrum rows as JSON (5 pages) (replace asks first), one row as CSV from the cell menu`);
   // a header click cycles asc -> desc -> none: click until ascending
   for (let i = 0; i < 3 && (await page.$eval("[role=columnheader][data-col=balance]", (h) => h.getAttribute("aria-sort"))) !== "ascending"; i++) {
     await page.evaluate(() => document.querySelector("[role=columnheader][data-col=balance]").click());
@@ -286,6 +360,7 @@ try {
   step("no console errors");
 } catch (e) {
   failed = e;
+  if (process.env.SMOKE_SHOT) await (await browser.pages()).at(-1)?.screenshot({ path: process.env.SMOKE_SHOT }).catch(() => undefined);
 } finally {
   await browser.close();
 }

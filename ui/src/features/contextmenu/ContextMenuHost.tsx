@@ -149,6 +149,16 @@ export function ContextMenuHost() {
   if (!open || !anchor) return null;
   return (
     <Menu.Root key={open.nonce} open onOpenChange={(o) => !o && closeMenu()} modal={false} loopFocus>
+      {/* A root without a trigger has no node in Base UI's floating tree: its submenus then count as siblings and close
+          it (or themselves, on focus-out) as soon as they open. An inert trigger at the pointer provides that node. */}
+      <Menu.Trigger
+        nativeButton={false}
+        render={<span />}
+        tabIndex={-1}
+        aria-hidden
+        className="pointer-events-none fixed size-0 opacity-0"
+        style={{ left: open.x, top: open.y }}
+      />
       <Menu.Portal>
         <Menu.Positioner anchor={anchor} side="bottom" align="start" sideOffset={2} collisionPadding={8} className="isolate z-[60] outline-none">
           <Menu.Popup ref={popupRef} className={POPUP} data-ctx-menu="" aria-label="Context menu">

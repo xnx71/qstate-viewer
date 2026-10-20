@@ -8,6 +8,7 @@ import type { ContractInfo, LedgerInfo, LedgerKind, NodeId, NodeInfo, StateTarge
 import { reloadWorkspace, selectTarget } from "@/store/actions";
 import { findReferences, lookupInLedger, openLedgerTable, patchLedgerUi, selectLedger, showLedgerTree } from "@/store/ledger";
 import { fetchChildren, fetchNode } from "@/store/data";
+import { openExportForNode } from "@/store/export";
 import { hexJumpAtom } from "@/store/hex";
 import { prefsAtom, resolveTheme, setUiSize, themeAtom, toggleTheme, uiSizeAtom, updatePrefs, type Prefs } from "@/store/prefs";
 import { findValue, openSearch, type SearchMode } from "@/store/search";
@@ -43,6 +44,8 @@ export interface MenuDeps {
   /** Open the "go to byte offset" prompt of the command palette. */
   promptOffset(): void;
   openTable(contract: StateTarget, id: NodeId, label: string, typeName: string): void;
+  /** Open the export dialog for every row of a tabular node. */
+  exportTable(contract: StateTarget, id: NodeId, label: string, typeName: string): void;
   setView(contract: StateTarget, view: "logical" | "raw"): Promise<boolean>;
   hideEmpty(): boolean;
   toggleHideEmpty(contract: StateTarget): void;
@@ -122,6 +125,7 @@ export const realDeps: MenuDeps = {
     store.set(paletteOpenAtom, true);
   },
   openTable: (contract, id, label, typeName) => openTable(contract, id, label, typeName),
+  exportTable: (contract, id, label, typeName) => openExportForNode(contract, id, label, typeName),
   setView: (contract, view) => setSelectedView(contract, view),
   hideEmpty: () => store.get(prefsAtom).hideEmpty,
   toggleHideEmpty: (contract) => {
